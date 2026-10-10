@@ -16,7 +16,16 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 
+// Fix std::byte conflict with Windows headers
+#ifdef _WIN32
+#define byte win_byte_override
+#endif
+
 #include <Windows.h>
+
+#ifdef _WIN32
+#undef byte
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <intrin.h>

@@ -10,6 +10,10 @@ void c_menu::init() {
     m_gui.apply_style_colors();
 }
 
+void c_menu::draw() {
+    render(); // Alias
+}
+
 void c_menu::draw_tabs() {
     // Используем tab систему из Neverlose GUI
     const char* tab_icons[] = {
@@ -159,8 +163,8 @@ void c_menu::draw_visuals() {
     
     m_gui.grid_col(1);
     m_gui.grid_box("WORLD");
-    ImGui::SliderFloat("Exposure", &g_cfg->world.m_exposure, 0.f, 2.f, "%.2f");
-    ImGui::SliderFloat("Lighting", &g_cfg->world.m_lighting, 0.f, 1.f, "%.2f");
+    ImGui::SliderInt("Exposure", &g_cfg->world.m_exposure, 0, 100);
+    ImGui::SliderFloat("Brightness", &g_cfg->world.m_brightness, 0.f, 1.f, "%.2f");
     m_gui.row_checkbox("Remove Fog", &g_cfg->world.m_render_fog);
     m_gui.end_group_box();
     
