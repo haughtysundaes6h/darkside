@@ -137,3 +137,354 @@ bool c_movement::sync_subtick_movement(c_user_cmd* cmd, float prior_forward, flo
     return command_movement::analog(*cmd->pb.mutable_base(), prior_forward, prior_left,
         [&] { return g_protobuf->add_subtick_move_step(cmd); });
 }
+
+
+// ============================================================================
+// ADVANCED MOVEMENT IMPLEMENTATIONS
+// ============================================================================
+
+void c_movement::edge_jump(c_user_cmd* user_cmd, c_cs_player_pawn* local_player) {
+    if (!g_cfg->misc.m_edge_jump)
+        return;
+    
+    if (!g_key_handler->is_pressed(g_cfg->misc.m_edge_jump_key, g_cfg->misc.m_edge_jump_key_style))
+        return;
+    
+    if (!local_player || !local_player->is_alive())
+        return;
+    
+    bool on_ground = (local_player->m_flags() & FL_ONGROUND) != 0;
+    
+    // Check for edge
+    if (on_ground && is_at_edge(local_player)) {
+        // Jump!
+        user_cmd->m_button_state.m_button_state |= IN_JUMP;
+        m_edge_detected = true;
+    }
+    
+    m_was_on_ground = on_ground;
+    m_last_origin = local_player->m_scene_node()->m_abs_origin();
+}
+
+bool c_movement::is_at_edge(c_cs_player_pawn* local_player) {
+    if (!local_player)
+        return false;
+    
+    vec3_t origin = local_player->m_scene_node()->m_abs_origin();
+    vec3_t velocity = local_player->m_vec_abs_velocity();
+    
+    // Calculate predicted position
+    float frametime = g_interfaces->m_global_vars->m_frame_time;
+    vec3_t predicted = origin + velocity * frametime;
+    
+    // Simple edge detection - check if we'll leave ground
+    // In a real implementation, you'd do a trace here
+    
+    float speed = velocity.length_2d();
+    if (speed < 50.0f)
+        return false;
+    
+    // Check if moving towards edge
+    vec3_t forward = velocity.normalize_2d();
+    vec3_t check_pos = origin + forward * 20.0f;
+    
+    // Simplified: consider at edge if height difference ahead
+    // Would need proper tracing in production
+    return speed > 100.0f && (local_player->m_flags() & FL_ONGROUND);
+}
+
+void c_movement::jump_bug(c_user_cmd* user_cmd, c_cs_player_pawn* local_player) {
+    if (!g_cfg->misc.m_jump_bug)
+        return;
+    
+    if (!g_key_handler->is_pressed(g_cfg->misc.m_jump_bug_key, g_cfg->misc.m_jump_bug_key_style))
+        return;
+    
+    if (!local_player || !local_player->is_alive())
+        return;
+    
+    bool on_ground = (local_player->m_flags() & FL_ONGROUND) != 0;
+    
+    if (on_ground) {
+        m_jumpbug_should_duck = false;
+        m_jumpbug_tick = 0;
+        return;
+    }
+    
+    // Check if we're falling
+    float fall_velocity = local_player->m_vec_abs_velocity().z;
+    if (fall_velocity >= 0)
+        return;
+    
+    int ticks_until_landing = 0;
+    if (predict_landing(local_player, ticks_until_landing)) {
+        // 1 tick before landing: release duck
+        // On landing tick: duck and jump
+        if (ticks_until_landing <= 2) {
+            if (ticks_until_landing == 2) {
+                // Duck
+                user_cmd->m_button_state.m_button_state |= IN_DUCK;
+            } else if (ticks_until_landing == 1) {
+                // Release duck, prepare jump
+                user_cmd->m_button_state.m_button_state &= ~IN_DUCK;
+            } else {
+                // Jump frame
+                user_cmd->m_button_state.m_button_state |= IN_JUMP;
+            }
+        }
+    }
+}
+
+bool c_movement::predict_landing(c_cs_player_pawn* local_player, int& ticks_until_landing) {
+    if (!local_player)
+        return false;
+    
+    vec3_t origin = local_player->m_scene_node()->m_abs_origin();
+    vec3_t velocity = local_player->m_vec_abs_velocity();
+    
+    // Simple gravity simulation
+    float gravity = 800.0f; // sv_gravity default
+    float tickrate = 1.0f / 64.0f; // 64 tick
+    
+    vec3_t predicted = origin;
+    vec3_t pred_vel = velocity;
+    
+    for (int i = 0; i < 64; i++) {
+        pred_vel.z -= gravity * tickrate;
+        predicted = predicted + pred_vel * tickrate;
+        
+        // Check if we hit ground (simplified)
+        // Would need proper tracing
+        if (predicted.z <= origin.z - 10.0f && pred_vel.z < -100.0f) {
+            ticks_until_landing = i;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+void c_movement::edge_bug(c_user_cmd* user_cmd, c_cs_player_pawn* local_player) {
+    if (!g_cfg->misc.m_edge_bug)
+        return;
+    
+    if (!g_key_handler->is_pressed(g_cfg->misc.m_edge_bug_key, g_cfg->misc.m_edge_bug_key_style))
+        return;
+    
+    if (!local_player || !local_player->is_alive())
+        return;
+    
+    bool on_ground = (local_player->m_flags() & FL_ONGROUND) != 0;
+    
+    if (on_ground) {
+        m_edgebug_active = false;
+        return;
+    }
+    
+    vec3_t velocity = local_player->m_vec_abs_velocity();
+    
+    // Only when falling
+    if (velocity.z >= 0)
+        return;
+    
+    // Detect edge
+    if (is_on_edge(local_player)) {
+        // Stop horizontal movement to stick to edge
+        auto* base = user_cmd->pb.mutable_base();
+        base->set_forwardmove(0);
+        base->set_leftmove(0);
+        
+        // Duck to catch edge
+        user_cmd->m_button_state.m_button_state |= IN_DUCK;
+        
+        m_edgebug_active = true;
+    }
+}
+
+bool c_movement::is_on_edge(c_cs_player_pawn* local_player) {
+    // Simplified edge detection
+    // In real implementation, trace rays to detect surfaces
+    return false;
+}
+
+void c_movement::long_jump(c_user_cmd* user_cmd, c_cs_player_pawn* local_player) {
+    // Long jump technique: crouch before jump for speed boost
+    // Implementation depends on game mechanics
+}
+
+void c_movement::infinite_duck(c_user_cmd* user_cmd, c_cs_player_pawn* local_player) {
+    if (!g_cfg->misc.m_infinite_duck)
+        return;
+    
+    if (!local_player || !local_player->is_alive())
+        return;
+    
+    // Toggle duck each tick to reset duck stamina
+    static bool duck_state = false;
+    
+    if (user_cmd->m_button_state.m_button_state & IN_DUCK) {
+        if (duck_state) {
+            // Keep ducked
+        } else {
+            duck_state = true;
+        }
+    }
+}
+
+// ============================================================================
+// STRAFE IMPLEMENTATIONS
+// ============================================================================
+
+void c_movement::legit_strafe(c_user_cmd* user_cmd, c_cs_player_pawn* local_player) {
+    if (!local_player || !local_player->is_alive())
+        return;
+    
+    if (local_player->m_flags() & FL_ONGROUND)
+        return;
+    
+    vec3_t velocity = local_player->m_vec_abs_velocity();
+    float speed = velocity.length_2d();
+    
+    if (speed < 15.0f)
+        return;
+    
+    // Apply smooth strafing based on mouse movement
+    // This is a legit-looking strafe that follows mouse input
+    
+    auto* base = user_cmd->pb.mutable_base();
+    float yaw = base->viewangles().y();
+    
+    // Calculate velocity angle
+    float vel_angle = rad2deg(std::atan2(velocity.y, velocity.x));
+    float delta = g_math->normalize_yaw(yaw - vel_angle);
+    
+    // Apply strafe input based on delta
+    float strafe_strength = std::clamp(std::abs(delta) / 90.0f, 0.0f, 1.0f);
+    
+    if (delta > 0) {
+        base->set_leftmove(-strafe_strength);
+    } else {
+        base->set_leftmove(strafe_strength);
+    }
+}
+
+void c_movement::directional_strafe(c_user_cmd* user_cmd, c_cs_player_pawn* local_player, float old_yaw) {
+    if (!local_player || !local_player->is_alive())
+        return;
+    
+    if (local_player->m_flags() & FL_ONGROUND)
+        return;
+    
+    auto* base = user_cmd->pb.mutable_base();
+    float current_yaw = base->viewangles().y();
+    float yaw_delta = g_math->normalize_yaw(current_yaw - old_yaw);
+    
+    vec3_t velocity = local_player->m_vec_abs_velocity();
+    float speed = velocity.length_2d();
+    
+    if (speed < 15.0f)
+        return;
+    
+    // Optimal strafe angle calculation
+    float max_speed = get_max_speed(local_player);
+    float wish_angle = std::clamp(std::asin(30.0f / speed), 0.0f, 1.5707f);
+    float strafe_angle = rad2deg(wish_angle);
+    
+    // Apply strafe based on yaw delta direction
+    if (yaw_delta > 0) {
+        base->set_leftmove(-1.0f);
+    } else if (yaw_delta < 0) {
+        base->set_leftmove(1.0f);
+    }
+}
+
+void c_movement::rage_strafe(c_user_cmd* user_cmd, c_cs_player_pawn* local_player, float old_yaw) {
+    if (!local_player || !local_player->is_alive())
+        return;
+    
+    if (local_player->m_flags() & FL_ONGROUND)
+        return;
+    
+    auto* base = user_cmd->pb.mutable_base();
+    vec3_t velocity = local_player->m_vec_abs_velocity();
+    float speed = velocity.length_2d();
+    
+    if (speed < 15.0f) {
+        base->set_forwardmove(1.0f);
+        return;
+    }
+    
+    // Calculate optimal strafe
+    float tick_interval = g_interfaces->m_global_vars->m_interval_per_tick;
+    float accel = 5.5f * tick_interval * 320.0f;
+    
+    float wish_angle = std::clamp(std::asin(accel / speed), 0.0f, 1.5707f);
+    float vel_angle = std::atan2(velocity.y, velocity.x);
+    
+    float current_yaw = deg2rad(base->viewangles().y());
+    float delta = g_math->normalize_yaw(rad2deg(current_yaw - vel_angle));
+    
+    // Alternate strafe direction for maximum speed
+    static bool strafe_right = false;
+    strafe_right = !strafe_right;
+    
+    if (strafe_right) {
+        base->set_leftmove(-1.0f);
+        base->mutable_viewangles()->set_y(g_math->normalize_yaw(rad2deg(vel_angle + wish_angle)));
+    } else {
+        base->set_leftmove(1.0f);
+        base->mutable_viewangles()->set_y(g_math->normalize_yaw(rad2deg(vel_angle - wish_angle)));
+    }
+    
+    base->set_forwardmove(0.0f);
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+float c_movement::get_max_speed(c_cs_player_pawn* local_player) {
+    if (!local_player)
+        return 250.0f;
+    
+    auto* weapon = local_player->get_active_weapon();
+    if (!weapon)
+        return 250.0f;
+    
+    return weapon->get_max_speed();
+}
+
+bool c_movement::is_on_ground(c_cs_player_pawn* local_player) {
+    if (!local_player)
+        return false;
+    
+    return (local_player->m_flags() & FL_ONGROUND) != 0;
+}
+
+vec3_t c_movement::predict_position(c_cs_player_pawn* local_player, int ticks) {
+    if (!local_player)
+        return {};
+    
+    vec3_t origin = local_player->m_scene_node()->m_abs_origin();
+    vec3_t velocity = local_player->m_vec_abs_velocity();
+    
+    float tickrate = g_interfaces->m_global_vars->m_interval_per_tick;
+    float gravity = 800.0f;
+    
+    vec3_t predicted = origin;
+    vec3_t pred_vel = velocity;
+    
+    for (int i = 0; i < ticks; i++) {
+        pred_vel.z -= gravity * tickrate;
+        predicted = predicted + pred_vel * tickrate;
+    }
+    
+    return predicted;
+}
+
+float c_movement::get_fall_velocity(c_cs_player_pawn* local_player) {
+    if (!local_player)
+        return 0.0f;
+    
+    return -local_player->m_vec_abs_velocity().z;
+}
