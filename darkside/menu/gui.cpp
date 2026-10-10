@@ -1369,7 +1369,8 @@ bool c_gui::row_multibox_geared( const char* label, const char* const* items, bo
     bool combo_hovered = ImGui::IsMouseHoveringRect(combo_bb.Min, combo_bb.Max);
     bool combo_clicked = combo_hovered && ImGui::IsMouseClicked(0);
     
-    float& hover_anim = *g.Storage.GetFloatRef(combo_id);
+    static std::unordered_map<ImGuiID, float> hover_anims;
+    float& hover_anim = hover_anims[combo_id];
     hover_anim = ImLerp(hover_anim, combo_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
     
     // Draw combo box background
@@ -1413,7 +1414,8 @@ bool c_gui::row_multibox_geared( const char* label, const char* const* items, bo
                 values[i] = !values[i];
             }
             
-            float& item_anim = *g.Storage.GetFloatRef(item_id);
+            static std::unordered_map<ImGuiID, float> item_anims;
+            float& item_anim = item_anims[item_id];
             item_anim = ImLerp(item_anim, item_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
             
             if (item_anim > 0.01f)
@@ -1524,7 +1526,8 @@ bool c_gui::row_checkbox_geared( const char* label, bool* v, const char* descrip
         *v = !*v;
     
     // Switch animation
-    float& sw_t = *g.Storage.GetFloatRef(id);
+    static std::unordered_map<ImGuiID, float> switch_anims;
+    float& sw_t = switch_anims[id];
     sw_t = ImLerp(sw_t, *v ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
     
     draw_switch_body(draw, sw_bb, sw_t);
