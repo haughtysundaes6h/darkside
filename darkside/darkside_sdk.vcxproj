@@ -185,6 +185,7 @@
     <ClCompile Include="menu\spotify.cpp" />
     <ClCompile Include="menu\gifbg.cpp" />
     <ClCompile Include="menu\runtime.cpp" />
+    <ClCompile Include="menu\binds.cpp" />
     <ClCompile Include="render\render.cpp" />
     <ClCompile Include="sdk\config_system\config_system.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui.cpp" />
@@ -232,6 +233,7 @@
     <ClInclude Include="hooks\hooks.hpp" />
     <ClInclude Include="math\math.hpp" />
     <ClInclude Include="menu\menu.hpp" />
+    <ClInclude Include="menu\binds.hpp" />
     <ClInclude Include="render\bytes.hpp" />
     <ClInclude Include="render\render.hpp" />
     <ClInclude Include="sdk\config_system\config_system.hpp" />
