@@ -337,6 +337,11 @@ public:
     // Shows "None", "item1, item2, ..." or "All" based on selection.
     // labels: array of item names, values: array of bools, count: number of items
     bool row_multibox( const char* label, const char* const* items, bool* values, int count, const char* description = "Click to select multiple options." );
+    
+    // Multibox with a gear icon that opens additional settings popup
+    // Returns true when the gear popup is open (call your additional UI inside the if block, then call row_multibox_gear_end)
+    bool row_multibox_with_gear( const char* label, const char* const* items, bool* values, int count, const char* description = "Click to select multiple options." );
+    void row_multibox_gear_end();
 
     // Sub-menu row + its popup in one call - the row draws itself, clicking it opens the
     // card beside it: `if ( gui.row_popup( "Pitch" ) ) { ...content... gui.popup_end(); }`

@@ -1294,6 +1294,178 @@ bool c_gui::row_multibox( const char* label, const char* const* items, bool* val
     return changed;
 }
 
+bool c_gui::row_multibox_with_gear( const char* label, const char* const* items, bool* values, int count, const char* description ) {
+    row_begin();
+    
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) { search_note(label); return false; }
+
+    ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(label);
+    const float s = m_scale;
+    
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos = window->DC.CursorPos;
+    float row_h = ImMax(19.f * s, ImGui::GetFontSize()) + style.FramePadding.y * 2.f;
+    ImVec2 size(w, row_h);
+    ImRect total_bb(pos, pos + size);
+    const float flash = search_note(label);
+    
+    ImGui::ItemSize(total_bb, style.FramePadding.y);
+    if (!ImGui::ItemAdd(total_bb, id))
+        return false;
+    
+    // Build preview string
+    std::string preview;
+    int selected_count = 0;
+    for (int i = 0; i < count; ++i) {
+        if (values[i]) {
+            selected_count++;
+            if (!preview.empty()) preview += ", ";
+            preview += tr(items[i]);
+        }
+    }
+    if (selected_count == 0) preview = tr("None");
+    else if (selected_count == count) preview = tr("All");
+    
+    // Draw label on the left
+    ImDrawList* draw = window->DrawList;
+    const char* shown_label = tr(label);
+    ImVec4 label_col = text_disabled.to_vec4(1.f, false);
+    label_col = ImLerp(label_col, accent_color.to_vec4(1.f, false), flash);
+    draw->AddText(ImVec2(total_bb.Min.x, IM_ROUND(total_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
+        ImGui::GetColorU32(label_col), shown_label);
+    
+    // Gear icon on the far right
+    const float gear_size = 18.f * s;
+    const float gear_pad = 4.f * s;
+    ImVec2 gear_pos(total_bb.Max.x - gear_size - gear_pad, total_bb.GetCenter().y - gear_size / 2.f);
+    ImRect gear_bb(gear_pos, gear_pos + ImVec2(gear_size, gear_size));
+    
+    const ImGuiID gear_id = window->GetID("##gear");
+    bool gear_hovered = ImGui::IsMouseHoveringRect(gear_bb.Min, gear_bb.Max);
+    bool gear_clicked = gear_hovered && ImGui::IsMouseClicked(0);
+    
+    // Gear animation
+    static std::unordered_map<ImGuiID, float> gear_anims;
+    float& gear_anim = gear_anims[gear_id];
+    gear_anim = ImLerp(gear_anim, gear_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
+    
+    // Draw gear icon
+    const char* gear_icon = ICON_FA_COG;
+    ImVec2 gear_icon_size = ImGui::CalcTextSize(gear_icon);
+    ImU32 gear_col = cfg_mix(text_disabled.to_vec4(1.f, false), accent_color.to_vec4(1.f, false), gear_anim);
+    draw->AddText(ImVec2(gear_bb.GetCenter().x - gear_icon_size.x / 2.f, gear_bb.GetCenter().y - gear_icon_size.y / 2.f),
+        gear_col, gear_icon);
+    
+    // Combo box on the right (before gear)
+    const float combo_w = 110.f * s;
+    const float combo_h = 22.f * s;
+    ImVec2 combo_pos(gear_bb.Min.x - combo_w - 8.f * s, total_bb.GetCenter().y - combo_h / 2.f);
+    ImRect combo_bb(combo_pos, combo_pos + ImVec2(combo_w, combo_h));
+    
+    const ImGuiID combo_id = window->GetID("##combo");
+    bool combo_hovered = ImGui::IsMouseHoveringRect(combo_bb.Min, combo_bb.Max);
+    bool combo_clicked = combo_hovered && ImGui::IsMouseClicked(0);
+    
+    // Animation
+    static std::unordered_map<ImGuiID, float> hover_anims;
+    float& hover_anim = hover_anims[combo_id];
+    hover_anim = ImLerp(hover_anim, combo_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
+    
+    // Draw combo box background
+    draw->AddRectFilled(combo_bb.Min, combo_bb.Max, field_bg.to_im_color(0.8f + 0.2f * hover_anim), 6.f * s);
+    draw->AddRect(combo_bb.Min, combo_bb.Max, border.to_im_color(0.5f + 0.3f * hover_anim), 6.f * s, 0, 1.f * s);
+    
+    // Preview text (clipped)
+    ImGui::PushClipRect(combo_bb.Min + ImVec2(8.f * s, 0), combo_bb.Max - ImVec2(20.f * s, 0), true);
+    draw->AddText(ImVec2(combo_bb.Min.x + 8.f * s, IM_ROUND(combo_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
+        text.to_im_color(), preview.c_str());
+    ImGui::PopClipRect();
+    
+    // Arrow icon
+    const char* arrow = ICON_FA_CHEVRON_DOWN;
+    ImVec2 arrow_size = ImGui::CalcTextSize(arrow);
+    draw->AddText(ImVec2(combo_bb.Max.x - arrow_size.x - 8.f * s, IM_ROUND(combo_bb.GetCenter().y - arrow_size.y / 2.f)),
+        text_disabled.to_im_color(), arrow);
+    
+    // Multibox popup handling
+    const std::string popup_name = std::string(label) + "##multibox_popup";
+    bool wants_open = false;
+    const float anim = popup_animation(popup_name.c_str(), combo_clicked, wants_open);
+    const ImVec2 click_pos = popup_click_pos(popup_name.c_str(), combo_clicked, ImVec2(combo_bb.Min.x, combo_bb.Max.y + 4.f * s));
+    
+    if (begin_popup_card(popup_name.c_str(), wants_open, anim, click_pos, combo_w / s, false, true)) {
+        ImDrawList* popup_draw = ImGui::GetWindowDrawList();
+        for (int i = 0; i < count; ++i) {
+            ImGui::PushID(i);
+            const char* item_label = tr(items[i]);
+            
+            ImVec2 item_pos = ImGui::GetCursorScreenPos();
+            float item_w = ImGui::GetContentRegionAvail().x;
+            float item_h = 26.f * s;
+            ImRect item_bb(item_pos, item_pos + ImVec2(item_w, item_h));
+            
+            const ImGuiID item_id = ImGui::GetID("##item");
+            bool item_hovered = ImGui::IsMouseHoveringRect(item_bb.Min, item_bb.Max);
+            bool item_clicked = item_hovered && ImGui::IsMouseClicked(0);
+            
+            if (item_clicked) {
+                values[i] = !values[i];
+            }
+            
+            // Hover highlight
+            static std::unordered_map<ImGuiID, float> item_anims;
+            float& item_anim = item_anims[item_id];
+            item_anim = ImLerp(item_anim, item_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
+            
+            if (item_anim > 0.01f)
+                popup_draw->AddRectFilled(item_bb.Min, item_bb.Max, frame_inactive.to_im_color(0.6f * item_anim), 4.f * s);
+            
+            // Checkbox
+            float check_size = 14.f * s;
+            ImVec2 check_pos(item_bb.Min.x + 8.f * s, item_bb.GetCenter().y - check_size / 2.f);
+            ImRect check_bb(check_pos, check_pos + ImVec2(check_size, check_size));
+            
+            popup_draw->AddRectFilled(check_bb.Min, check_bb.Max, 
+                values[i] ? accent_color.to_im_color(0.9f) : frame_inactive.to_im_color(0.8f), 3.f * s);
+            
+            if (values[i]) {
+                float pad = 3.f * s;
+                ImGui::RenderCheckMark(popup_draw, check_bb.Min + ImVec2(pad, pad), 
+                    IM_COL32(255, 255, 255, 255), check_size - pad * 2.f);
+            }
+            
+            // Item label
+            popup_draw->AddText(ImVec2(check_bb.Max.x + 8.f * s, IM_ROUND(item_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
+                values[i] ? text.to_im_color() : text_disabled.to_im_color(), item_label);
+            
+            // Advance cursor
+            ImGui::Dummy(ImVec2(item_w, item_h));
+            ImGui::PopID();
+        }
+        end_popup_card();
+    }
+    
+    info_tooltip(label, description);
+    
+    // Gear popup handling - return true if open so caller can add content
+    const std::string gear_popup_name = std::string(label) + "##gear_popup";
+    bool gear_wants_open = false;
+    const float gear_popup_anim = popup_animation(gear_popup_name.c_str(), gear_clicked, gear_wants_open);
+    const ImVec2 gear_click_pos = popup_click_pos(gear_popup_name.c_str(), gear_clicked, ImVec2(gear_bb.Max.x + 4.f * s, gear_bb.GetCenter().y));
+    
+    if (begin_popup_card_at(gear_popup_name.c_str(), gear_wants_open, gear_popup_anim, gear_click_pos, ImVec2(0.f, 0.5f), 180.f)) {
+        return true; // Caller should add their content and call row_multibox_gear_end()
+    }
+    return false;
+}
+
+void c_gui::row_multibox_gear_end() {
+    end_popup_card();
+}
+
 // Segmented icon bar (the Players tab's header): the active segment opens up to show its label,
 // the others stay icon-only, and the widths ease between the two. Right-aligned on `top_right`.
 // `trailing_icon` is an extra button of its own on the end; true on the frame it is clicked.

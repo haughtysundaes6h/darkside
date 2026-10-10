@@ -417,9 +417,12 @@ void c_menu::draw_rage() {
     
     // MULTIPOINTS
     gui.grid_box("MULTIPOINTS", k_auto_height);
-    gui.row_multibox("Points", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.");
-    gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_hitbox_scale[0], 0, 100, "%d%%");
-    gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_hitbox_scale[1], 0, 100, "%d%%");
+    if (gui.row_multibox_with_gear("Points", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.")) {
+        // Gear popup content - scale sliders
+        ImGui::SliderInt("Head Scale", &cfg.m_hitbox_scale[0], 0, 100, "%d%%");
+        ImGui::SliderInt("Body Scale", &cfg.m_hitbox_scale[1], 0, 100, "%d%%");
+        gui.row_multibox_gear_end();
+    }
     gui.row_checkbox("Static Point Scale", &cfg.m_static_scale);
     gui.end_group_box();
 
