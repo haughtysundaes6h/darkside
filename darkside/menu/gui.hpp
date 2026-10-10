@@ -1,8 +1,8 @@
 #pragma once
 
 #define  IMGUI_DEFINE_MATH_OPERATORS
-#include "imgui.h"
-#include "imgui_internal.h"
+#include "../sdk/includes/imgui/imgui.h"
+#include "../sdk/includes/imgui/imgui_internal.h"
 
 #include "color_t.hpp"
 
