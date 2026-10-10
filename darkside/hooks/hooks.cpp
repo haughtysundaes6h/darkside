@@ -214,7 +214,8 @@ void __fastcall hooks::create_move::hk_create_move(i_csgo_input* rcx, int slot, 
 	const float old_left_move = user_cmd->pb.mutable_base()->leftmove();
 	const float old_up_move = user_cmd->pb.mutable_base()->upmove();
 
-	bool menu_modified = g_menu->on_create_move();
+	g_menu->on_create_move();
+	bool menu_modified = false;
 
 	if (pre_pawn == g_ctx->m_local_pawn)
 		g_prediction->capture_movement_prestate(g_ctx->m_local_pawn, user_cmd, pre_flags, pre_velocity);

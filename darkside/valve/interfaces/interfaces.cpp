@@ -1,3 +1,4 @@
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "interfaces.hpp"
 #include "../../darkside.hpp"
 #include "../cs2_build.hpp"

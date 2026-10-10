@@ -170,7 +170,7 @@ void c_menu::draw_visuals() {
     
     m_gui.grid_box("THIRDPERSON");
     m_gui.row_checkbox("Enabled", &g_cfg->world_esp.m_enable_thirdperson);
-    ImGui::SliderFloat("Distance", &g_cfg->world_esp.m_distance, 50.f, 300.f, "%.0f");
+    ImGui::SliderInt("Distance", &g_cfg->world_esp.m_distance, 50, 300);
     m_gui.end_group_box();
     
     m_gui.end_grid();
@@ -185,7 +185,7 @@ void c_menu::draw_misc() {
     m_gui.row_checkbox("Auto Strafe", &g_cfg->misc.m_auto_strafe);
     static const char* strafe_types[] = {"Legit", "Directional", "Rage"};
     ImGui::Combo("Type", &g_cfg->misc.m_strafe_type, strafe_types, IM_ARRAYSIZE(strafe_types));
-    ImGui::SliderFloat("Smooth", &g_cfg->misc.m_strafe_smooth, 0.f, 100.f, "%.1f%%");
+    ImGui::SliderInt("Smooth", &g_cfg->misc.m_strafe_smooth, 0, 100);
     m_gui.end_group_box();
     
     m_gui.grid_col(1);

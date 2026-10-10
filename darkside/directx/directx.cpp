@@ -8,7 +8,7 @@ LRESULT hk_wnd_proc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) {
 	ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
 
 	if ( uMsg == WM_KEYUP && wParam == VK_INSERT ) {
-		g_menu->m_opened = !g_menu->m_opened.load();
+		g_menu->m_opened = !g_menu->m_opened;
 		if (g_menu->m_opened)
 			g_menu->m_block_attack_until_release = true;
 	}
