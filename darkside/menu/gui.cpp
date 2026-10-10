@@ -1169,13 +1169,14 @@ bool c_gui::row_multibox( const char* label, const char* const* items, bool* val
     
     float w = ImGui::GetContentRegionAvail().x;
     ImVec2 pos = window->DC.CursorPos;
-    float row_h = ImMax(19.f * s, ImGui::CalcTextSize(label).y) + style.FramePadding.y * 2.f;
+    float row_h = ImMax(19.f * s, ImGui::GetFontSize()) + style.FramePadding.y * 2.f;
     ImVec2 size(w, row_h);
     ImRect total_bb(pos, pos + size);
     const float flash = search_note(label);
     
-    ImGui::ItemAdd(total_bb, id);
     ImGui::ItemSize(total_bb, style.FramePadding.y);
+    if (!ImGui::ItemAdd(total_bb, id))
+        return false;
     
     // Build preview string
     std::string preview;
@@ -1190,47 +1191,46 @@ bool c_gui::row_multibox( const char* label, const char* const* items, bool* val
     if (selected_count == 0) preview = tr("None");
     else if (selected_count == count) preview = tr("All");
     
-    // Draw label
+    // Draw label on the left
     ImDrawList* draw = window->DrawList;
     const char* shown_label = tr(label);
-    ImVec4 label_col = ImLerp(text_disabled.to_vec4(1.f, false), text.to_vec4(1.f, false), 0.f);
+    ImVec4 label_col = text_disabled.to_vec4(1.f, false);
     label_col = ImLerp(label_col, accent_color.to_vec4(1.f, false), flash);
     draw->AddText(ImVec2(total_bb.Min.x, IM_ROUND(total_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
         ImGui::GetColorU32(label_col), shown_label);
     
     // Combo box on the right
-    const float combo_w = 120.f * s;
+    const float combo_w = 130.f * s;
     const float combo_h = 22.f * s;
-    ImVec2 combo_pos(total_bb.Max.x - combo_w - 10.f * s, total_bb.GetCenter().y - combo_h / 2.f);
+    ImVec2 combo_pos(total_bb.Max.x - combo_w, total_bb.GetCenter().y - combo_h / 2.f);
     ImRect combo_bb(combo_pos, combo_pos + ImVec2(combo_w, combo_h));
     
-    ImGui::SetCursorScreenPos(combo_pos);
     const ImGuiID combo_id = window->GetID("##combo");
-    bool combo_hovered, combo_held;
-    bool combo_clicked = ImGui::ButtonBehavior(combo_bb, combo_id, &combo_hovered, &combo_held);
+    bool combo_hovered = ImGui::IsMouseHoveringRect(combo_bb.Min, combo_bb.Max);
+    bool combo_clicked = combo_hovered && ImGui::IsMouseClicked(0);
     
     // Animation
     static std::unordered_map<ImGuiID, float> hover_anims;
     float& hover_anim = hover_anims[combo_id];
     hover_anim = ImLerp(hover_anim, combo_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
     
-    // Draw combo box
+    // Draw combo box background
     draw->AddRectFilled(combo_bb.Min, combo_bb.Max, field_bg.to_im_color(0.8f + 0.2f * hover_anim), 6.f * s);
     draw->AddRect(combo_bb.Min, combo_bb.Max, border.to_im_color(0.5f + 0.3f * hover_anim), 6.f * s, 0, 1.f * s);
     
-    // Preview text (truncated if needed)
+    // Preview text (clipped)
     ImGui::PushClipRect(combo_bb.Min + ImVec2(8.f * s, 0), combo_bb.Max - ImVec2(20.f * s, 0), true);
     draw->AddText(ImVec2(combo_bb.Min.x + 8.f * s, IM_ROUND(combo_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
         text.to_im_color(), preview.c_str());
     ImGui::PopClipRect();
     
-    // Arrow
+    // Arrow icon
     const char* arrow = ICON_FA_CHEVRON_DOWN;
     ImVec2 arrow_size = ImGui::CalcTextSize(arrow);
-    draw->AddText(ImVec2(combo_bb.Max.x - arrow_size.x - 6.f * s, IM_ROUND(combo_bb.GetCenter().y - arrow_size.y / 2.f)),
+    draw->AddText(ImVec2(combo_bb.Max.x - arrow_size.x - 8.f * s, IM_ROUND(combo_bb.GetCenter().y - arrow_size.y / 2.f)),
         text_disabled.to_im_color(), arrow);
     
-    // Popup
+    // Popup handling
     const std::string popup_name = std::string(label) + "##multibox_popup";
     bool wants_open = false;
     const float anim = popup_animation(popup_name.c_str(), combo_clicked, wants_open);
@@ -1238,6 +1238,7 @@ bool c_gui::row_multibox( const char* label, const char* const* items, bool* val
     
     bool changed = false;
     if (begin_popup_card(popup_name.c_str(), wants_open, anim, click_pos, combo_w / s, false, true)) {
+        ImDrawList* popup_draw = ImGui::GetWindowDrawList();
         for (int i = 0; i < count; ++i) {
             ImGui::PushID(i);
             const char* item_label = tr(items[i]);
@@ -1247,43 +1248,43 @@ bool c_gui::row_multibox( const char* label, const char* const* items, bool* val
             float item_h = 26.f * s;
             ImRect item_bb(item_pos, item_pos + ImVec2(item_w, item_h));
             
-            const ImGuiID item_id = window->GetID("##item");
-            bool item_hovered, item_held;
-            bool item_clicked = ImGui::ButtonBehavior(item_bb, item_id, &item_hovered, &item_held);
-            ImGui::ItemAdd(item_bb, item_id);
+            const ImGuiID item_id = ImGui::GetID("##item");
+            bool item_hovered = ImGui::IsMouseHoveringRect(item_bb.Min, item_bb.Max);
+            bool item_clicked = item_hovered && ImGui::IsMouseClicked(0);
             
             if (item_clicked) {
                 values[i] = !values[i];
                 changed = true;
             }
             
-            // Hover animation
+            // Hover highlight
             static std::unordered_map<ImGuiID, float> item_anims;
             float& item_anim = item_anims[item_id];
             item_anim = ImLerp(item_anim, item_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
             
             if (item_anim > 0.01f)
-                draw->AddRectFilled(item_bb.Min, item_bb.Max, frame_inactive.to_im_color(0.6f * item_anim), 4.f * s);
+                popup_draw->AddRectFilled(item_bb.Min, item_bb.Max, frame_inactive.to_im_color(0.6f * item_anim), 4.f * s);
             
             // Checkbox
             float check_size = 14.f * s;
-            ImVec2 check_pos(item_bb.Min.x + 6.f * s, item_bb.GetCenter().y - check_size / 2.f);
+            ImVec2 check_pos(item_bb.Min.x + 8.f * s, item_bb.GetCenter().y - check_size / 2.f);
             ImRect check_bb(check_pos, check_pos + ImVec2(check_size, check_size));
             
-            draw->AddRectFilled(check_bb.Min, check_bb.Max, 
+            popup_draw->AddRectFilled(check_bb.Min, check_bb.Max, 
                 values[i] ? accent_color.to_im_color(0.9f) : frame_inactive.to_im_color(0.8f), 3.f * s);
             
             if (values[i]) {
-                float check_pad = 3.f * s;
-                ImGui::RenderCheckMark(draw, check_bb.Min + ImVec2(check_pad, check_pad), 
-                    IM_COL32(255, 255, 255, 255), check_size - check_pad * 2.f);
+                float pad = 3.f * s;
+                ImGui::RenderCheckMark(popup_draw, check_bb.Min + ImVec2(pad, pad), 
+                    IM_COL32(255, 255, 255, 255), check_size - pad * 2.f);
             }
             
-            // Label
-            draw->AddText(ImVec2(check_bb.Max.x + 8.f * s, IM_ROUND(item_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
+            // Item label
+            popup_draw->AddText(ImVec2(check_bb.Max.x + 8.f * s, IM_ROUND(item_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
                 values[i] ? text.to_im_color() : text_disabled.to_im_color(), item_label);
             
-            ImGui::SetCursorScreenPos(item_pos + ImVec2(0, item_h));
+            // Advance cursor
+            ImGui::Dummy(ImVec2(item_w, item_h));
             ImGui::PopID();
         }
         end_popup_card();
