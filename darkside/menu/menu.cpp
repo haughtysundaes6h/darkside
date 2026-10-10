@@ -3,6 +3,7 @@
 #include "../darkside.hpp"
 #include "../features/skins/skins.hpp"
 #include "../features/anti_hit/anti_hit.hpp"
+#include "neverlose_style.hpp"
 
 // Helper function for linear interpolation
 static ImVec4 ImLerp(const ImVec4& a, const ImVec4& b, float t) {
@@ -45,53 +46,9 @@ static const char* g_tab_names[] = {
 };
 
 void c_menu::apply_style() {
-    ImGuiStyle& style = ImGui::GetStyle();
-    
-    style.WindowRounding = 8.0f;
-    style.ChildRounding = 6.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.PopupRounding = 6.0f;
-    style.ScrollbarRounding = 4.0f;
-    style.TabRounding = 4.0f;
-    
-    style.WindowPadding = ImVec2(0, 0);
-    style.FramePadding = ImVec2(8, 6);
-    style.ItemSpacing = ImVec2(8, 8);
-    style.ItemInnerSpacing = ImVec2(6, 6);
-    style.ScrollbarSize = 10.0f;
-    style.GrabMinSize = 8.0f;
-    
-    style.WindowBorderSize = 1.0f;
-    style.ChildBorderSize = 1.0f;
-    style.PopupBorderSize = 1.0f;
-    style.FrameBorderSize = 0.0f;
-    
-    auto& colors = style.Colors;
-    colors[ImGuiCol_WindowBg] = m_colors.background;
-    colors[ImGuiCol_ChildBg] = m_colors.background_child;
-    colors[ImGuiCol_PopupBg] = m_colors.popup_bg;
-    colors[ImGuiCol_Border] = m_colors.border;
-    colors[ImGuiCol_FrameBg] = m_colors.slider_bg;
-    colors[ImGuiCol_FrameBgHovered] = m_colors.button_hover;
-    colors[ImGuiCol_FrameBgActive] = m_colors.accent;
-    colors[ImGuiCol_TitleBg] = m_colors.header;
-    colors[ImGuiCol_TitleBgActive] = m_colors.header;
-    colors[ImGuiCol_TitleBgCollapsed] = m_colors.header;
-    colors[ImGuiCol_MenuBarBg] = m_colors.header;
-    colors[ImGuiCol_ScrollbarBg] = m_colors.slider_bg;
-    colors[ImGuiCol_ScrollbarGrab] = m_colors.button;
-    colors[ImGuiCol_ScrollbarGrabHovered] = m_colors.button_hover;
-    colors[ImGuiCol_ScrollbarGrabActive] = m_colors.accent;
-    colors[ImGuiCol_CheckMark] = m_colors.accent;
-    colors[ImGuiCol_SliderGrab] = m_colors.accent;
-    colors[ImGuiCol_SliderGrabActive] = m_colors.accent_hover;
-    colors[ImGuiCol_Button] = m_colors.button;
-    colors[ImGuiCol_ButtonHovered] = m_colors.button_hover;
-    colors[ImGuiCol_ButtonActive] = m_colors.accent;
-    colors[ImGuiCol_Header] = m_colors.button;
-    colors[ImGuiCol_HeaderHovered] = m_colors.button_hover;
-    colors[ImGuiCol_HeaderActive] = m_colors.accent;
+    // Применяем стиль Neverlose Reloaded
+    neverlose_style::apply_style();
+}
     colors[ImGuiCol_Separator] = m_colors.border;
     colors[ImGuiCol_SeparatorHovered] = m_colors.accent;
     colors[ImGuiCol_SeparatorActive] = m_colors.accent;
