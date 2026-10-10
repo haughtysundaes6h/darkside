@@ -1,6 +1,10 @@
 // dear imgui: FreeType font builder (used as a replacement for the stb_truetype builder)
 // (code)
 
+// DISABLED - FreeType integration disabled due to compilation issues
+// Use default STB TrueType rasterizer instead
+#define IMGUI_DISABLE
+
 // Get the latest version at https://github.com/ocornut/imgui/tree/master/misc/freetype
 // Original code by @vuhdo (Aleksei Skriabin). Improvements by @mikesart. Maintained since 2019 by @ocornut.
 
@@ -40,7 +44,8 @@
 #include "imgui_internal.h"     // ImMin,ImMax,ImFontAtlasBuild*,
 #include <stdint.h>
 
-// FreeType includes
+// FreeType includes - must include ft2build.h first
+#include "Freetype/include/ft2build.h"
 #include "Freetype/include/freetype/freetype.h"
 #include "Freetype/include/freetype/ftmodapi.h"
 #include "Freetype/include/freetype/ftglyph.h"

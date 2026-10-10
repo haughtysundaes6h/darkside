@@ -15,4 +15,13 @@
 #define FT_OTSVG_H      <freetype/otsvg.h>
 #define FT_BBOX_H       <freetype/ftbbox.h>
 
+/* Define C++ compatibility macros */
+#ifdef __cplusplus
+#define FT_BEGIN_HEADER  extern "C" {
+#define FT_END_HEADER    }
+#else
+#define FT_BEGIN_HEADER  /* nothing */
+#define FT_END_HEADER    /* nothing */
+#endif
+
 #endif /* FT2BUILD_H_ */
