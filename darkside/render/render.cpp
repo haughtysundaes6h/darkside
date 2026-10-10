@@ -1,8 +1,42 @@
 #include "render.hpp"
-#include "../sdk/includes/imgui/imgui_freetype.h"
+#include "../menu/menu_resources.h"
+#include "../menu/hashes.hpp"
+#include "../sdk/includes/imgui/imgui_impl_dx11.h"
+
+namespace {
+HMODULE current_module_handle() {
+    HMODULE module = nullptr;
+    GetModuleHandleExA(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCSTR>(&current_module_handle), &module);
+    return module;
+}
+
+ImFont* add_embedded_font(int resource_id, float size, ImFontConfig config,
+                          const ImWchar* ranges, bool required_slot = true) {
+    HMODULE module = current_module_handle();
+    HRSRC resource = module ? FindResourceW(module, MAKEINTRESOURCEW(resource_id), MAKEINTRESOURCEW(10)) : nullptr;
+    HGLOBAL loaded = resource ? LoadResource(module, resource) : nullptr;
+    void* data = loaded ? LockResource(loaded) : nullptr;
+    const DWORD data_size = resource ? SizeofResource(module, resource) : 0;
+
+    config.FontDataOwnedByAtlas = false;
+    if (data && data_size)
+        return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, static_cast<int>(data_size), size, &config, ranges);
+
+    if (!required_slot)
+        return nullptr;
+
+    config.MergeMode = false;
+    config.SizePixels = size;
+    return ImGui::GetIO().Fonts->AddFontDefault(&config);
+}
+}
 
 void c_render::update_screen_size( ImGuiIO io ){
 	const ImVec2 display_size = io.DisplaySize;
+	if (display_size.x <= 0.f || display_size.y <= 0.f)
+		return;
 
 	m_screen_size = vec3_t( display_size.x, display_size.y );
 
@@ -17,20 +51,64 @@ void c_render::initialize( ) {
 	io.LogFilename = nullptr;
 	io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
-	ImFontConfig cfg;
-	cfg.PixelSnapH = false;
-	cfg.OversampleH = 5;
-	cfg.OversampleV = 5;
+	ImGui::StyleColorsDark();
+	io.Fonts->Clear();
 
-	fonts.verdana = io.Fonts->AddFontFromFileTTF( "C:\\Windows\\Fonts\\Verdana.ttf", 13.f, nullptr, io.Fonts->GetGlyphRangesCyrillic( ) );
-	fonts.verdana_small = io.Fonts->AddFontFromFileTTF( "C:\\Windows\\Fonts\\Verdana.ttf", 12.f, &cfg, io.Fonts->GetGlyphRangesCyrillic( ) );
+	static const ImWchar ui_ranges[] = {
+		0x0020, 0x00FF,
+		0x0100, 0x017F,
+		0x0400, 0x052F,
+		0
+	};
+	static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
 
-	auto prev_flags = cfg.FontBuilderFlags;
-	cfg.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_MonoHinting | ImGuiFreeTypeBuilderFlags_Monochrome;
-	fonts.onetap_pixel = io.Fonts->AddFontFromMemoryTTF( onetap_pixel_font, sizeof( onetap_pixel_font ), 8.f, &cfg, io.Fonts->GetGlyphRangesCyrillic( ) );
-	cfg.FontBuilderFlags = prev_flags;
+	ImFontConfig text_config{};
+	text_config.OversampleH = 3;
+	text_config.PixelSnapH = true;
+	text_config.RasterizerMultiply = 1.0f;
 
-	io.FontDefault = fonts.verdana;
+	ImFontConfig ui_config = text_config;
+	ui_config.OversampleH = 1;
+
+	// Preserve the exact ten-slot font order used by Neverlose Reloaded.
+	ImFont* menu_body = add_embedded_font(IDR_FONT_INTER_MEDIUM, 15.0f, ui_config, ui_ranges);
+
+	ImFontConfig icon_config{};
+	icon_config.MergeMode = true;
+	icon_config.PixelSnapH = true;
+	add_embedded_font(IDR_FONT_FA_SOLID, 14.0f, icon_config, icon_ranges, false);
+
+	add_embedded_font(IDR_FONT_SST_BOLD, 30.0f, text_config, ui_ranges);             // slot 1
+	add_embedded_font(IDR_FONT_SPACE_GROTESK, 40.0f, text_config, ui_ranges);        // slot 2
+	add_embedded_font(IDR_FONT_INTER_MEDIUM, 17.0f, text_config, ui_ranges);          // slot 3
+	add_embedded_font(IDR_FONT_INTER_SEMIBOLD, 17.0f, text_config, ui_ranges);        // slot 4
+	add_embedded_font(IDR_FONT_MUSEO_BOLD, 17.0f, text_config, ui_ranges);            // slot 5
+	add_embedded_font(IDR_FONT_INTER_SEMIBOLD, 12.5f, text_config, ui_ranges);        // slot 6
+	add_embedded_font(IDR_FONT_INTER_MEDIUM, 13.0f, ui_config, ui_ranges);            // slot 7
+
+	ImFontConfig caption_icons = icon_config;
+	add_embedded_font(IDR_FONT_FA_SOLID, 13.0f, caption_icons, icon_ranges, false);
+
+	add_embedded_font(IDR_FONT_INTER_SEMIBOLD, 22.0f, text_config, ui_ranges);        // slot 8
+	add_embedded_font(IDR_FONT_INTER_MEDIUM, 17.0f, text_config, ui_ranges);          // slot 9
+
+	// Keep the existing ESP fonts as explicit handles after the menu's fixed slots.
+	ImFontConfig esp_config{};
+	esp_config.PixelSnapH = false;
+	esp_config.OversampleH = 5;
+	esp_config.OversampleV = 5;
+	fonts.verdana = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\Verdana.ttf", 13.f, nullptr, io.Fonts->GetGlyphRangesCyrillic());
+	fonts.verdana_small = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\Verdana.ttf", 12.f, &esp_config, io.Fonts->GetGlyphRangesCyrillic());
+	ImFontConfig onetap_config = esp_config;
+	onetap_config.FontDataOwnedByAtlas = false;
+	fonts.onetap_pixel = io.Fonts->AddFontFromMemoryTTF(onetap_pixel_font, sizeof(onetap_pixel_font), 8.f, &onetap_config, io.Fonts->GetGlyphRangesCyrillic());
+
+	io.FontDefault = menu_body ? menu_body : (io.Fonts->Fonts.Size ? io.Fonts->Fonts[0] : nullptr);
+	io.Fonts->Build();
+	ImGui_ImplDX11_CreateDeviceObjects();
+
+	gui.apply_theme(0);
+	gui.apply_style_colors();
 }
 
 void c_render::update_background_drawlist( ImDrawList* draw_list ) {

@@ -2,7 +2,7 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
-#include "../menu/blur.hpp"
+#include "../menu/runtime.hpp"
 
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
 
@@ -97,55 +97,131 @@ void c_directx::initialize( ) {
 }
 
 void c_directx::unitialize( ) {
-	if (m_window_proc_original)
+	if (m_window_proc_original && m_window)
 		SetWindowLongPtr(m_window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(m_window_proc_original));
+	m_window_proc_original = nullptr;
+	m_window = nullptr;
+
+	if (m_initialized) {
+		menu_runtime::shutdown();
+		ImGui_ImplDX11_Shutdown();
+		ImGui_ImplWin32_Shutdown();
+		ImGui::DestroyContext();
+		m_initialized = false;
+	}
+
+	if (m_render_target) { m_render_target->Release(); m_render_target = nullptr; }
+	if (m_device_context) { m_device_context->Release(); m_device_context = nullptr; }
+	if (m_device) { m_device->Release(); m_device = nullptr; }
+
 	if (m_present_module) {
 		FreeLibrary(m_present_module);
 		m_present_module = nullptr;
 	}
 }
 
-std::once_flag init_flag;
+namespace {
+std::mutex g_directx_init_mutex;
+}
 
-void c_directx::start_frame( IDXGISwapChain* swap_chain ) {
-	ID3D11Texture2D* back_buffer;
-	DXGI_SWAP_CHAIN_DESC desc;
-	swap_chain->GetDesc( &desc );
+bool c_directx::start_frame( IDXGISwapChain* swap_chain ) {
+	if (m_initialized)
+		return true;
+	if (!swap_chain)
+		return false;
 
+	std::scoped_lock lock(g_directx_init_mutex);
+	if (m_initialized)
+		return true;
+
+	DXGI_SWAP_CHAIN_DESC desc{};
+	if (FAILED(swap_chain->GetDesc(&desc)) || !desc.OutputWindow)
+		return false;
+
+	ID3D11Device* device = nullptr;
+	ID3D11DeviceContext* context = nullptr;
+	ID3D11Texture2D* back_buffer = nullptr;
+	ID3D11RenderTargetView* render_target = nullptr;
+	bool win32_ready = false;
+	bool dx11_ready = false;
+	bool runtime_ready = false;
+
+	const auto cleanup_failed_init = [&]() {
+		if (runtime_ready)
+			menu_runtime::shutdown();
+		if (dx11_ready)
+			ImGui_ImplDX11_Shutdown();
+		if (win32_ready)
+			ImGui_ImplWin32_Shutdown();
+		if (ImGui::GetCurrentContext())
+			ImGui::DestroyContext();
+		if (render_target)
+			render_target->Release();
+		if (back_buffer)
+			back_buffer->Release();
+		if (context)
+			context->Release();
+		if (device)
+			device->Release();
+	};
+
+	if (FAILED(swap_chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))) || !device)
+		return false;
+	device->GetImmediateContext(&context);
+	if (!context || FAILED(swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back_buffer))) || !back_buffer) {
+		cleanup_failed_init();
+		return false;
+	}
+	if (FAILED(device->CreateRenderTargetView(back_buffer, nullptr, &render_target)) || !render_target) {
+		cleanup_failed_init();
+		return false;
+	}
+	back_buffer->Release();
+	back_buffer = nullptr;
+
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	win32_ready = ImGui_ImplWin32_Init(desc.OutputWindow);
+	if (!win32_ready) {
+		cleanup_failed_init();
+		return false;
+	}
+	dx11_ready = ImGui_ImplDX11_Init(device, context);
+	if (!dx11_ready) {
+		cleanup_failed_init();
+		return false;
+	}
+
+	g_render->initialize();
+	g_menu->init();
+	runtime_ready = menu_runtime::initialize(device, context, render_target);
+	if (!runtime_ready) {
+		cleanup_failed_init();
+		return false;
+	}
+
+	SetLastError(ERROR_SUCCESS);
+	WNDPROC original_proc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(
+		desc.OutputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(hk_wnd_proc)));
+	if (!original_proc) {
+		cleanup_failed_init();
+		return false;
+	}
+
+	m_device = device;
+	m_device_context = context;
+	m_render_target = render_target;
 	m_window = desc.OutputWindow;
-
-	std::call_once( init_flag, [&]( )
-	{
-		swap_chain->GetDevice( __uuidof( ID3D11Device ), reinterpret_cast<void**>( &m_device ) );
-		m_device->GetImmediateContext( &m_device_context );
-		swap_chain->GetBuffer( 0, __uuidof( ID3D11Texture2D ), reinterpret_cast<void**>( &back_buffer ) );
-
-		m_device->CreateRenderTargetView( back_buffer, nullptr, &m_render_target );
-
-		if ( back_buffer )
-			back_buffer->Release( );
-
-		m_window_proc_original = reinterpret_cast<WNDPROC>( SetWindowLongPtr( m_window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>( hk_wnd_proc ) ) );
-
-		ImGui::CreateContext( );
-		ImGui_ImplWin32_Init( m_window );
-		ImGui_ImplDX11_Init( m_device, m_device_context );
-
-		// Wire the blur module to our D3D11 device/context so draw_blur_rounded() works.
-		blur::device = m_device;
-		blur::context = m_device_context;
-
-		g_render->initialize( );
-	} );
+	m_window_proc_original = original_proc;
+	m_initialized = true;
+	return true;
 }
 
 void c_directx::new_frame( ) {
-	ImGuiIO io = ImGui::GetIO( );
-
-	g_render->update_screen_size( io );
-
 	ImGui_ImplDX11_NewFrame( );
 	ImGui_ImplWin32_NewFrame( );
+	g_render->update_screen_size( ImGui::GetIO( ) );
 	ImGui::NewFrame( );
 }
 

@@ -1,6 +1,4 @@
-#pragma once
-
-#include "../sdk/includes/imgui/imgui.h"
+#include "imgui.h"
 using namespace ImGui;
 
 struct color_t {

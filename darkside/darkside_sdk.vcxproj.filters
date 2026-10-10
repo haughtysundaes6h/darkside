@@ -48,6 +48,24 @@
     <ClCompile Include="menu\menu.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="menu\gui.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="menu\blur.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="menu\shader_bg.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="menu\spotify.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="menu\gifbg.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="menu\runtime.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
     <ClCompile Include="directx\directx.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
@@ -106,9 +124,6 @@
       <Filter>Исходные файлы</Filter>
     </ClCompile>
     <ClCompile Include="render\render.cpp">
-      <Filter>Исходные файлы</Filter>
-    </ClCompile>
-    <ClCompile Include="sdk\includes\imgui\imgui_freetype.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
     <ClCompile Include="sdk\config_system\config_system.cpp">
@@ -718,5 +733,10 @@
     <ClInclude Include="features\movement\command_movement.hpp" />
     <ClInclude Include="features\movement\movement_math.hpp" />
     <ClInclude Include="features\movement\landing_predictor.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="menu_fonts.rc">
+      <Filter>Файлы ресурсов</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

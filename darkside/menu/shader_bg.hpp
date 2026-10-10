@@ -1,7 +1,7 @@
 #pragma once
 
 #define IMGUI_DEFINE_MATH_OPERATORS
-#include "../sdk/includes/imgui/imgui.h"
+#include "imgui.h"
 
 // Animated HLSL backgrounds (shaders/*.h) rendered behind the menu's chrome.
 //
