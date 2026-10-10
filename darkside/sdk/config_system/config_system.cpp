@@ -301,6 +301,11 @@ void c_config_system::remove( std::string path ) {
 	refresh( );
 }
 
+void c_config_system::load( std::string path ) {
+	// load is an alias for read
+	read( path );
+}
+
 void c_config_system::reset( ) {
 	for ( auto& b : booleans )
 		*b.pointer = b.default_value;
