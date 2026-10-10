@@ -40,19 +40,35 @@ void load_config(const std::string& name) {
 
 void register_bind_targets() {
     auto& rage = g_cfg->rage_bot;
-    auto& weapon = rage.m_weapon_config[0];
     menu_binds::register_bool("rage.enabled", "Enabled", &rage.m_enabled);
     menu_binds::register_bool("rage.silent", "Silent Aim", &rage.m_silent);
-    menu_binds::register_bool("rage.auto_fire", "Automatic Fire", &weapon.m_auto_fire);
-    menu_binds::register_bool("rage.auto_stop", "Automatic Stop", &weapon.m_auto_stop);
-    menu_binds::register_bool("rage.auto_scope", "Automatic Scope", &weapon.m_auto_scope);
-    for (int i = 0; i < 5; ++i) {
-        static const char* names[] = { "Head", "Chest", "Stomach", "Arms", "Legs" };
-        const std::string key = "rage.hitbox." + std::to_string(i);
-        menu_binds::register_bool(key.c_str(), names[i], &weapon.m_hitboxes[i]);
+    
+    // Register binds for ALL weapon groups
+    for (int g = 0; g < WEAPON_GROUP_MAX; ++g) {
+        auto& weapon = rage.m_weapon_config[g];
+        const std::string prefix = "rage." + std::string(weapon_group_names[g]) + ".";
+        
+        menu_binds::register_bool((prefix + "auto_fire").c_str(), "Automatic Fire", &weapon.m_auto_fire);
+        menu_binds::register_bool((prefix + "auto_stop").c_str(), "Automatic Stop", &weapon.m_auto_stop);
+        menu_binds::register_bool((prefix + "auto_scope").c_str(), "Automatic Scope", &weapon.m_auto_scope);
+        menu_binds::register_bool((prefix + "delay_shot").c_str(), "Delay Shot", &weapon.m_delay_shot);
+        menu_binds::register_bool((prefix + "prefer_safe").c_str(), "Prefer Safe Point", &weapon.m_prefer_safe);
+        menu_binds::register_bool((prefix + "prefer_body").c_str(), "Prefer Body Aim", &weapon.m_prefer_body);
+        menu_binds::register_bool((prefix + "baim_lethal").c_str(), "Body Aim If Lethal", &weapon.m_prefer_baim_lethal);
+        menu_binds::register_bool((prefix + "static_scale").c_str(), "Static Point Scale", &weapon.m_static_scale);
+        
+        for (int i = 0; i < 6; ++i) {
+            static const char* hitbox_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+            menu_binds::register_bool((prefix + "hitbox." + std::to_string(i)).c_str(), hitbox_names[i], &weapon.m_hitboxes[i]);
+            menu_binds::register_bool((prefix + "multipoint." + std::to_string(i)).c_str(), hitbox_names[i], &weapon.m_multi_points[i]);
+        }
+        
+        menu_binds::register_int((prefix + "hit_chance").c_str(), "Hit Chance", &weapon.m_hit_chance, 0, 100);
+        menu_binds::register_int((prefix + "minimum_damage").c_str(), "Minimum Damage", &weapon.m_minimum_damage, 0, 120);
+        menu_binds::register_int((prefix + "head_scale").c_str(), "Head Scale", &weapon.m_hitbox_scale[0], 0, 100);
+        menu_binds::register_int((prefix + "body_scale").c_str(), "Body Scale", &weapon.m_hitbox_scale[1], 0, 100);
+        menu_binds::register_int((prefix + "baim_after").c_str(), "BAIM After Misses", &weapon.m_baim_after_x_shots, 0, 10);
     }
-    menu_binds::register_int("rage.hit_chance", "Hit Chance", &weapon.m_hit_chance, 0, 100);
-    menu_binds::register_int("rage.minimum_damage", "Minimum Damage", &weapon.m_minimum_damage, 0, 120);
 
     auto& legit = g_cfg->legit_bot;
     menu_binds::register_bool("legit.enabled", "Enabled", &legit.m_enabled);
@@ -276,7 +292,6 @@ void c_menu::draw_rage() {
     gui.grid_box("ACCURACY", k_auto_height);
     gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
     gui.row_begin(); ImGui::SliderInt("Minimum Damage", &cfg.m_minimum_damage, 0, 120);
-    gui.row_begin(); ImGui::SliderInt("Override Damage", &cfg.m_minimum_damage_override, 1, 120);
     gui.end_group_box();
     
     // BEHAVIOR settings
