@@ -27,15 +27,24 @@ void c_config_system::setup_values( )
 		for (auto hitbox = 0; hitbox < 6; hitbox++) {
 			push_item(&cfg.m_hitboxes[hitbox], "rage_bot", std::format("{}_{}_hitbox_{}", prefix, group, hitbox), cfg.m_hitboxes[hitbox]);
 			push_item(&cfg.m_multi_points[hitbox], "rage_bot", std::format("{}_{}_multipoint_{}", prefix, group, hitbox), cfg.m_multi_points[hitbox]);
-			push_item(&cfg.m_hitbox_scale[hitbox], "rage_bot", std::format("{}_{}_scale_{}", prefix, group, hitbox), cfg.m_hitbox_scale[hitbox]);
 		}
 		
-		push_item(&cfg.m_static_scale, "rage_bot", prefix + "_static_scale", cfg.m_static_scale);
+		push_item(&cfg.m_head_scale, "rage_bot", prefix + "_head_scale", cfg.m_head_scale);
+		push_item(&cfg.m_body_scale, "rage_bot", prefix + "_body_scale", cfg.m_body_scale);
 		push_item(&cfg.m_hit_chance, "rage_bot", prefix + "_hit_chance", cfg.m_hit_chance);
+		push_item(&cfg.m_hit_chance_seed, "rage_bot", prefix + "_hit_chance_seed", cfg.m_hit_chance_seed);
+		push_item(&cfg.m_extrapolate, "rage_bot", prefix + "_extrapolate", cfg.m_extrapolate);
+		push_item(&cfg.m_backtrack, "rage_bot", prefix + "_backtrack", cfg.m_backtrack);
 		push_item(&cfg.m_minimum_damage, "rage_bot", prefix + "_min_damage", cfg.m_minimum_damage);
-		push_item(&cfg.m_minimum_damage_override, "rage_bot", prefix + "_min_damage_override", cfg.m_minimum_damage_override);
-		push_item(&cfg.m_auto_fire, "rage_bot", prefix + "_auto_fire", cfg.m_auto_fire);
+		push_item(&cfg.m_delay_shot, "rage_bot", prefix + "_delay_shot", cfg.m_delay_shot);
 		push_item(&cfg.m_auto_stop, "rage_bot", prefix + "_auto_stop", cfg.m_auto_stop);
+		push_item(&cfg.m_auto_stop_early, "rage_bot", prefix + "_auto_stop_early", cfg.m_auto_stop_early);
+		push_item(&cfg.m_auto_stop_full, "rage_bot", prefix + "_auto_stop_full", cfg.m_auto_stop_full);
+		push_item(&cfg.m_auto_stop_between, "rage_bot", prefix + "_auto_stop_between", cfg.m_auto_stop_between);
+		push_item(&cfg.m_auto_stop_air, "rage_bot", prefix + "_auto_stop_air", cfg.m_auto_stop_air);
+		push_item(&cfg.m_auto_stop_duck, "rage_bot", prefix + "_auto_stop_duck", cfg.m_auto_stop_duck);
+		push_item(&cfg.m_auto_scope, "rage_bot", prefix + "_auto_scope", cfg.m_auto_scope);
+		push_item(&cfg.m_penetration, "rage_bot", prefix + "_penetration", cfg.m_penetration);
 	}
 
 	push_item( &g_cfg->rage_bot.m_override_damage_key_bind, "rage_bot", "override_damage_keybind", g_cfg->rage_bot.m_override_damage_key_bind );

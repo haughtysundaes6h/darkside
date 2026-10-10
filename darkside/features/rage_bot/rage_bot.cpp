@@ -268,9 +268,11 @@ bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_
 	if (!multipoint_for_hitbox)
 		return true;
 
-	float scale = weapon_cfg.m_hitbox_scale[hitbox_from_menu];
-
-	if (!weapon_cfg.m_static_scale)
+	// Use head_scale for head, body_scale for everything else
+	// -1 means Auto (use calculated scale)
+	float scale = (hitbox == HITBOX_HEAD) ? weapon_cfg.m_head_scale : weapon_cfg.m_body_scale;
+	
+	if (scale == -1) // Auto
 		scale = calc_point_scale(point, hitbox_data.m_radius);
 
 	float radius = hitbox_data.m_radius * (scale / 100.f);
@@ -422,8 +424,9 @@ void c_rage_bot::select_target()
 			continue;
 
 		const int health = pawn->m_health();
-		int min_damage = min(override_damage ? weapon_cfg.m_minimum_damage_override
-			: weapon_cfg.m_minimum_damage, health);
+		// If m_minimum_damage is -1, use Auto (calc based on health)
+		int min_damage_value = weapon_cfg.m_minimum_damage == -1 ? health : weapon_cfg.m_minimum_damage;
+		int min_damage = min(override_damage ? min_damage_value : min_damage_value, health);
 		if (is_taser)
 			min_damage = health;
 
@@ -615,9 +618,8 @@ void c_rage_bot::process_attack(c_user_cmd* user_cmd, vec3_t angle)
 		user_cmd->pb.set_attack1_start_history_index(0);
 	process_backtrack(m_best_target->m_lag_record);
 
-	auto& weapon_cfg = get_current_weapon_config();
-	if (weapon_cfg.m_auto_fire)
-		user_cmd->m_button_state.m_button_state |= IN_ATTACK;
+	// Always auto fire in rage bot
+	user_cmd->m_button_state.m_button_state |= IN_ATTACK;
 }
 
 void c_rage_bot::on_create_move()

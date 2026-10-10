@@ -1620,8 +1620,9 @@ bool c_gui::row_slider_with_gear( const char* label, int* v, int min_val, int ma
         auto_enabled ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim), 4.f * s);
     
     ImVec2 auto_text_size = ImGui::CalcTextSize(auto_text);
+    ImU32 auto_text_col = auto_enabled ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color();
     draw->AddText(ImVec2(auto_bb.GetCenter().x - auto_text_size.x / 2.f, auto_bb.GetCenter().y - auto_text_size.y / 2.f),
-        auto_enabled ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color(), auto_text);
+        auto_text_col, auto_text);
     
     // Slider on the right (narrower to fit auto button)
     const float slider_w = 130.f * s;
@@ -1746,8 +1747,9 @@ void c_gui::row_slider_auto( const char* label, int* v, int min_val, int max_val
     
     const char* auto_text = "Auto";
     ImVec2 auto_text_size = ImGui::CalcTextSize(auto_text);
+    ImU32 auto_txt_col = is_auto ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color();
     draw->AddText(ImVec2(auto_bb.GetCenter().x - auto_text_size.x / 2.f, auto_bb.GetCenter().y - auto_text_size.y / 2.f),
-        is_auto ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color(), auto_text);
+        auto_txt_col, auto_text);
     
     // Slider on the right
     const float slider_w = 130.f * s;
@@ -1874,8 +1876,9 @@ bool c_gui::row_slider_auto_with_gear( const char* label, int* v, int min_val, i
     
     const char* auto_text = "Auto";
     ImVec2 auto_text_size = ImGui::CalcTextSize(auto_text);
+    ImU32 auto_txt_color = is_auto ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color();
     draw->AddText(ImVec2(auto_bb.GetCenter().x - auto_text_size.x / 2.f, auto_bb.GetCenter().y - auto_text_size.y / 2.f),
-        is_auto ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color(), auto_text);
+        auto_txt_color, auto_text);
     
     // Slider on the right (narrower because of gear)
     const float slider_w = 110.f * s;
