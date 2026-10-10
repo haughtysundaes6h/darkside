@@ -86,18 +86,18 @@ public:
         bool m_enabled = true;
         bool m_override_general = false;  // Использовать свои настройки вместо General
         
-        // Hitboxes (7 options: Auto + 6 body parts)
-        bool m_hitboxes[7] = {false, true, true, true, false, false, false};  // Auto, Head, Chest, Stomach, Arms, Legs, Feet
-        bool m_multi_points[7] = {false, true, true, true, false, false, false};  // Auto, Head, Chest, Stomach, Arms, Legs, Feet
-        int m_head_scale = 50;
-        int m_body_scale = 50;
+        // Hitboxes (6 body parts)
+        bool m_hitboxes[6] = {true, true, true, false, false, false};  // Head, Chest, Stomach, Arms, Legs, Feet
+        bool m_multi_points[6] = {true, true, true, false, false, false};  // Head, Chest, Stomach, Arms, Legs, Feet
+        int m_head_scale = 50;  // -1 = Auto
+        int m_body_scale = 50;  // -1 = Auto
         
         // Accuracy
-        int m_hit_chance = 60;
+        int m_hit_chance = 60;  // -1 = Auto
         int m_hit_chance_seed = 0;  // 0-256
-        bool m_extrapolate = false;
-        int m_minimum_damage = 20;  // Can be "Auto" (use m_minimum_damage_auto flag)
-        bool m_minimum_damage_auto = false;
+        int m_extrapolate = 0;  // 0-16 ticks
+        bool m_backtrack = false;
+        int m_minimum_damage = 20;  // -1 = Auto
         bool m_delay_shot = false;
         
         // Auto Stop (multibox - can select multiple)

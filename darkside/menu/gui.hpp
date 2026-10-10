@@ -353,6 +353,14 @@ public:
     // has_auto: if true, shows "Auto" text when auto_enabled is true
     bool row_slider_with_gear( const char* label, int* v, int min_val, int max_val, bool& auto_enabled, const char* auto_text = "Auto", const char* description = "" );
     void row_slider_gear_end();
+    
+    // Slider with Auto option (value -1 = Auto)
+    // Shows "Auto" when value is -1, otherwise shows the value
+    void row_slider_auto( const char* label, int* v, int min_val, int max_val, const char* format = "%d", const char* description = "" );
+    
+    // Slider with Auto option AND gear icon
+    // Returns true when gear popup is open
+    bool row_slider_auto_with_gear( const char* label, int* v, int min_val, int max_val, const char* format = "%d", const char* description = "" );
 
     // Sub-menu row + its popup in one call - the row draws itself, clicking it opens the
     // card beside it: `if ( gui.row_popup( "Pitch" ) ) { ...content... gui.popup_end(); }`

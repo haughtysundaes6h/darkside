@@ -52,19 +52,20 @@ void register_bind_targets() {
         menu_binds::register_bool((prefix + "auto_scope").c_str(), "Auto Scope", &weapon.m_auto_scope);
         menu_binds::register_bool((prefix + "penetration").c_str(), "Penetration", &weapon.m_penetration);
         menu_binds::register_bool((prefix + "delay_shot").c_str(), "Delay Shot", &weapon.m_delay_shot);
-        menu_binds::register_bool((prefix + "extrapolate").c_str(), "Extrapolate", &weapon.m_extrapolate);
+        menu_binds::register_bool((prefix + "backtrack").c_str(), "Backtrack", &weapon.m_backtrack);
         
-        for (int i = 0; i < 7; ++i) {
-            static const char* hitbox_names[] = { "Auto", "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+        for (int i = 0; i < 6; ++i) {
+            static const char* hitbox_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
             menu_binds::register_bool((prefix + "hitbox." + std::to_string(i)).c_str(), hitbox_names[i], &weapon.m_hitboxes[i]);
             menu_binds::register_bool((prefix + "multipoint." + std::to_string(i)).c_str(), hitbox_names[i], &weapon.m_multi_points[i]);
         }
         
-        menu_binds::register_int((prefix + "hit_chance").c_str(), "Hit Chance", &weapon.m_hit_chance, 0, 100);
+        menu_binds::register_int((prefix + "hit_chance").c_str(), "Hit Chance", &weapon.m_hit_chance, -1, 100);
         menu_binds::register_int((prefix + "hit_chance_seed").c_str(), "Hit Chance Seed", &weapon.m_hit_chance_seed, 0, 256);
-        menu_binds::register_int((prefix + "minimum_damage").c_str(), "Min Damage", &weapon.m_minimum_damage, 0, 120);
-        menu_binds::register_int((prefix + "head_scale").c_str(), "Head Scale", &weapon.m_head_scale, 0, 100);
-        menu_binds::register_int((prefix + "body_scale").c_str(), "Body Scale", &weapon.m_body_scale, 0, 100);
+        menu_binds::register_int((prefix + "extrapolate").c_str(), "Extrapolate", &weapon.m_extrapolate, 0, 16);
+        menu_binds::register_int((prefix + "minimum_damage").c_str(), "Min Damage", &weapon.m_minimum_damage, -1, 120);
+        menu_binds::register_int((prefix + "head_scale").c_str(), "Head Scale", &weapon.m_head_scale, -1, 100);
+        menu_binds::register_int((prefix + "body_scale").c_str(), "Body Scale", &weapon.m_body_scale, -1, 100);
     }
 
     auto& legit = g_cfg->legit_bot;
@@ -384,9 +385,9 @@ void c_menu::draw() {
 }
 
 void c_menu::draw_rage() {
-    // Names for multiboxes (with Auto as first option)
-    static const char* hitbox_names[] = { "Auto", "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
-    static const char* multipoint_names[] = { "Auto", "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+    // Names for multiboxes
+    static const char* hitbox_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+    static const char* multipoint_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
     static const char* auto_stop_names[] = { "Early", "Full Stop", "Between Shots", "Air", "Duck" };
     
     // Get current weapon config
@@ -400,10 +401,11 @@ void c_menu::draw_rage() {
     // MAIN settings
     gui.grid_box("MAIN", k_auto_height);
     
-    // Enable with gear (hit chance seed, extrapolate)
+    // Enable with gear (hit chance seed, extrapolate ticks, backtrack)
     if (gui.row_checkbox_with_gear("Enable", &g_cfg->rage_bot.m_enabled)) {
         gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
-        gui.row_checkbox("Extrapolate", &cfg.m_extrapolate);
+        gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
+        gui.row_checkbox("Backtrack", &cfg.m_backtrack);
         gui.row_checkbox_gear_end();
     }
     
@@ -434,21 +436,21 @@ void c_menu::draw_rage() {
     // SETTINGS
     gui.grid_box("SETTINGS", k_auto_height);
     
-    // Hitbox multibox
-    gui.row_multibox("Hitbox", hitbox_names, cfg.m_hitboxes, 7, "Select target hitboxes.");
+    // Hitbox multibox (6 elements)
+    gui.row_multibox("Hitbox", hitbox_names, cfg.m_hitboxes, 6, "Select target hitboxes.");
     
-    // Multipoint with gear (head/body scale)
-    if (gui.row_multibox_with_gear("Multipoint", multipoint_names, cfg.m_multi_points, 7, "Select multipoint locations.")) {
-        gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
-        gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%");
+    // Multipoint with gear (head/body scale with Auto option)
+    if (gui.row_multibox_with_gear("Multipoint", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.")) {
+        gui.row_slider_auto("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
+        gui.row_slider_auto("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%");
         gui.row_multibox_gear_end();
     }
     
-    // Hit Chance
-    gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
+    // Hit Chance with Auto option
+    gui.row_slider_auto("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
     
     // Min Damage with gear (delay shot) and Auto option
-    if (gui.row_slider_with_gear("Min Damage", &cfg.m_minimum_damage, 0, 120, cfg.m_minimum_damage_auto, "Auto")) {
+    if (gui.row_slider_auto_with_gear("Min Damage", &cfg.m_minimum_damage, 0, 120)) {
         gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
         gui.row_slider_gear_end();
     }
