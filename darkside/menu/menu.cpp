@@ -261,8 +261,10 @@ void c_menu::draw_rage() {
     gui.row_multibox("Target", hitbox_names, cfg.m_hitboxes, 6, "Select which body parts to target.");
     gui.end_group_box();
     
-    // MULTIPOINTS with gear icon
+    // MULTIPOINTS with gear icon for scale settings
     gui.grid_box("MULTIPOINTS", k_auto_height);
+    
+    // Points multibox with gear
     gui.row_begin();
     if (gui.row_options_begin("##multipoint_settings", 200.f)) {
         gui.popup_section_begin("##mp_sliders", true);
@@ -271,7 +273,89 @@ void c_menu::draw_rage() {
         gui.popup_section_end();
         gui.row_options_end();
     }
-    gui.row_multibox("Points", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.");
+    // Manual multibox-style display for Points (since row_multibox calls row_begin internally)
+    {
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        const float s = gui.m_scale;
+        float w = ImGui::GetContentRegionAvail().x;
+        ImVec2 pos = window->DC.CursorPos;
+        float row_h = ImMax(19.f * s, ImGui::GetFontSize()) + ImGui::GetStyle().FramePadding.y * 2.f;
+        
+        // Build preview
+        std::string preview;
+        int sel = 0;
+        for (int i = 0; i < 6; ++i) {
+            if (cfg.m_multi_points[i]) {
+                sel++;
+                if (!preview.empty()) preview += ", ";
+                preview += multipoint_names[i];
+            }
+        }
+        if (sel == 0) preview = "None";
+        else if (sel == 6) preview = "All";
+        
+        // Label
+        window->DrawList->AddText(ImVec2(pos.x, IM_ROUND(pos.y + row_h/2 - ImGui::GetFontSize()/2)),
+            gui.text_disabled.to_im_color(), "Points");
+        
+        // Combo box
+        const float combo_w = 120.f * s;
+        const float combo_h = 22.f * s;
+        ImVec2 combo_pos(pos.x + w - combo_w - 10.f * s, pos.y + row_h/2 - combo_h/2);
+        ImRect combo_bb(combo_pos, combo_pos + ImVec2(combo_w, combo_h));
+        
+        ImGui::SetCursorScreenPos(combo_pos);
+        bool clicked = ImGui::InvisibleButton("##mp_combo", ImVec2(combo_w, combo_h));
+        bool hovered = ImGui::IsItemHovered();
+        
+        window->DrawList->AddRectFilled(combo_bb.Min, combo_bb.Max, gui.field_bg.to_im_color(0.8f + 0.2f * (hovered ? 1.f : 0.f)), 6.f * s);
+        window->DrawList->AddRect(combo_bb.Min, combo_bb.Max, gui.border.to_im_color(0.5f + 0.3f * (hovered ? 1.f : 0.f)), 6.f * s, 0, 1.f * s);
+        
+        ImGui::PushClipRect(combo_bb.Min + ImVec2(8.f * s, 0), combo_bb.Max - ImVec2(20.f * s, 0), true);
+        window->DrawList->AddText(ImVec2(combo_bb.Min.x + 8.f * s, IM_ROUND(combo_bb.GetCenter().y - ImGui::GetFontSize()/2)),
+            gui.text.to_im_color(), preview.c_str());
+        ImGui::PopClipRect();
+        
+        window->DrawList->AddText(ImVec2(combo_bb.Max.x - 14.f * s, IM_ROUND(combo_bb.GetCenter().y - ImGui::GetFontSize()/2)),
+            gui.text_disabled.to_im_color(), ICON_FA_CHEVRON_DOWN);
+        
+        // Popup
+        bool wants_open = false;
+        float anim = gui.popup_animation("##mp_popup", clicked, wants_open);
+        ImVec2 click_pos = gui.popup_click_pos("##mp_popup", clicked, ImVec2(combo_bb.Min.x, combo_bb.Max.y + 4.f * s));
+        
+        if (gui.begin_popup_card("##mp_popup", wants_open, anim, click_pos, combo_w / s, false, true)) {
+            for (int i = 0; i < 6; ++i) {
+                ImGui::PushID(i);
+                ImVec2 item_pos = ImGui::GetCursorScreenPos();
+                float item_h = 26.f * s;
+                ImRect item_bb(item_pos, item_pos + ImVec2(ImGui::GetContentRegionAvail().x, item_h));
+                
+                if (ImGui::InvisibleButton("##item", ImVec2(item_bb.GetWidth(), item_h)))
+                    cfg.m_multi_points[i] = !cfg.m_multi_points[i];
+                
+                bool item_hovered = ImGui::IsItemHovered();
+                if (item_hovered)
+                    window->DrawList->AddRectFilled(item_bb.Min, item_bb.Max, gui.frame_inactive.to_im_color(0.6f), 4.f * s);
+                
+                float check_size = 14.f * s;
+                ImVec2 check_pos(item_bb.Min.x + 6.f * s, item_bb.GetCenter().y - check_size/2);
+                window->DrawList->AddRectFilled(check_pos, check_pos + ImVec2(check_size, check_size),
+                    cfg.m_multi_points[i] ? gui.accent_color.to_im_color(0.9f) : gui.frame_inactive.to_im_color(0.8f), 3.f * s);
+                
+                if (cfg.m_multi_points[i])
+                    ImGui::RenderCheckMark(window->DrawList, check_pos + ImVec2(3.f * s, 3.f * s), IM_COL32(255,255,255,255), check_size - 6.f * s);
+                
+                window->DrawList->AddText(ImVec2(check_pos.x + check_size + 8.f * s, IM_ROUND(item_bb.GetCenter().y - ImGui::GetFontSize()/2)),
+                    cfg.m_multi_points[i] ? gui.text.to_im_color() : gui.text_disabled.to_im_color(), multipoint_names[i]);
+                
+                ImGui::PopID();
+            }
+            gui.end_popup_card();
+        }
+        
+        ImGui::SetCursorScreenPos(pos + ImVec2(0, row_h + ImGui::GetStyle().ItemSpacing.y));
+    }
     
     gui.row_checkbox("Static Point Scale", &cfg.m_static_scale);
     gui.end_group_box();
