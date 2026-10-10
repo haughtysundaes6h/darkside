@@ -623,44 +623,22 @@ void draw_bind_menu(bind_target& target, const ImRect& rect, const ImRect& contr
     ImDrawList* draw = window->DrawList;
     ImFont* font = ImGui::GetFont();
     const float s = gui.m_scale;
+    IM_UNUSED(font);
 
     ImGui::PushID(target.key.c_str());
     const bool menu_up = ImGui::IsPopupOpen(ImGui::GetID("##bind_menu"), ImGuiPopupFlags_None);
     const bool row_hovered = ImGui::IsMouseHoveringRect(rect.Min, rect.Max, true);
     const bool has_binds = !target.entries.empty();
 
-    // --- the gear, in the gap left of the row's control ---
-    const float sz = 16.f * s;
-    const float right = control.Min.x - 8.f * s - gui.m_row_slot_claims * gui.row_slot_step();
-    const float top = rect.Min.y + IM_ROUND((rect.GetHeight() - sz) * 0.5f);
-    const ImRect gear(ImVec2(right - sz, top), ImVec2(right, top + sz));
-
-    // ItemAdd without ItemSize, ahead of the row's own ButtonBehavior, so the gear takes its own
-    // click instead of toggling the row it sits on (the same trick gui.row_options_begin uses).
-    const ImGuiID gear_id = ImGui::GetID("##bind_gear");
-    bool gear_clicked = false, gear_hovered = false, gear_held = false;
-    if (gear.Min.x > rect.Min.x && ImGui::ItemAdd(gear, gear_id))
-        gear_clicked = ImGui::ButtonBehavior(gear, gear_id, &gear_hovered, &gear_held);
-    IM_UNUSED(gear_held);
-
-    // A bound row always shows its gear - that is the "this row is bound" tell. An unbound one
-    // only fades it in under the cursor, so a row nobody is looking at stays clean.
-    const float show = row_anim(ImHashStr("##gearshow", 0, gear_id),
-                                has_binds || menu_up || row_hovered || gear_hovered);
-    if (show > 0.01f) {
-        const float t = row_anim(gear_id, gear_hovered || menu_up);
-        const ImVec4 idle = has_binds ? gui.accent_color.to_vec4(1.f, false)
-                                      : gui.text_disabled.to_vec4(1.f, false);
-        ImVec4 col = lerp_color(idle, gui.text.to_vec4(1.f, false), t * (has_binds ? 0.35f : 1.f));
-        col.w *= show;
-        const float glyph = sz * 0.82f;
-        const ImVec2 isz = font->CalcTextSizeA(glyph, FLT_MAX, 0.f, ICON_FA_COG);
-        draw->AddText(font, glyph, ImVec2(IM_ROUND(gear.GetCenter().x - isz.x * 0.5f),
-                                          IM_ROUND(gear.GetCenter().y - isz.y * 0.5f)),
-                      ImGui::GetColorU32(col), ICON_FA_COG);
+    // Draw a subtle accent-colored dot on the right side of the control to indicate binds exist
+    if (has_binds) {
+        const float dot_r = 3.f * s;
+        const ImVec2 dot_center(control.Max.x + 6.f * s, control.GetCenter().y);
+        draw->AddCircleFilled(dot_center, dot_r, gui.accent_color.to_im_color(0.85f));
     }
 
-    const bool open_menu = gear_clicked || (row_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right));
+    // Right-click on the row opens the bind menu (no gear icon)
+    const bool open_menu = row_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
 
     bool wants_open = false;
     const float anim = gui.popup_animation("##bind_menu", open_menu, wants_open);
