@@ -404,7 +404,7 @@ void c_visuals::draw_hitmarker() {
     
     // Decay
     m_hitmarker_alpha -= g_interfaces->m_global_vars->m_frame_time * 2.0f;
-    m_hitmarker_alpha = std::max(0.0f, m_hitmarker_alpha);
+    m_hitmarker_alpha = (std::max)(0.0f, m_hitmarker_alpha);
     
     auto& io = ImGui::GetIO();
     vec3_t center{io.DisplaySize.x / 2.f, io.DisplaySize.y / 2.f, 0};
@@ -476,7 +476,7 @@ void c_visuals::draw_bullet_tracers() {
             g_render->world_to_screen(end, screen_end)) {
             
             c_color color = tracer.m_color;
-            color.a() = alpha;
+            color.a = alpha;
             
             g_render->line(
                 {screen_start.x, screen_start.y},

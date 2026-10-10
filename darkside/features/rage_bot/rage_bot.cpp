@@ -615,11 +615,9 @@ void c_rage_bot::process_attack(c_user_cmd* user_cmd, vec3_t angle)
 		user_cmd->pb.set_attack1_start_history_index(0);
 	process_backtrack(m_best_target->m_lag_record);
 
-	if (g_cfg->rage_bot.m_auto_fire) {
-		auto& weapon_cfg = get_current_weapon_config();
-		if (weapon_cfg.m_auto_fire)
-			user_cmd->m_button_state.m_button_state |= IN_ATTACK;
-	}
+	auto& weapon_cfg = get_current_weapon_config();
+	if (weapon_cfg.m_auto_fire)
+		user_cmd->m_button_state.m_button_state |= IN_ATTACK;
 }
 
 void c_rage_bot::on_create_move()

@@ -125,11 +125,11 @@ float vec3_t::length_sqr( ) {
 	return x * x + y * y + z * z;
 }
 
-float vec3_t::length_2d( ) {
+float vec3_t::length_2d( ) const {
 	return std::sqrtf( this->length_2d_sqr( ) );
 }
 
-float vec3_t::length_2d_sqr( ) {
+float vec3_t::length_2d_sqr( ) const {
 	return x * x + y * y;
 }
 

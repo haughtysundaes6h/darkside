@@ -323,7 +323,7 @@ public:
 	}
 	
 	int get_item_def_index() {
-		auto& item = m_attribute_manager().m_item();
+		auto& item = m_attribute_manager()->m_item();
 		return static_cast<int>(item.m_defenition_index());
 	}
 	

@@ -2,6 +2,21 @@
 #include "menu.hpp"
 #include "../darkside.hpp"
 #include "../features/skins/skins.hpp"
+#include "../features/anti_hit/anti_hit.hpp"
+
+// Helper function for linear interpolation
+static ImVec4 ImLerp(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.z + (b.z - a.z) * t,
+        a.w + (b.w - a.w) * t
+    );
+}
+
+static float ImLerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
 
 // ============================================================================
 // NEVERLOSE-STYLE MENU IMPLEMENTATION
@@ -568,7 +583,7 @@ void c_menu::draw_antiaim_tab() {
         
         ImGui::BeginChild("##cond_settings", ImVec2(0, 0), false);
         
-        anti_hit_t::condition_t* cond = nullptr;
+        c_config_system::anti_hit_t::condition_t* cond = nullptr;
         switch (selected_condition) {
             case 0: cond = &g_cfg->anti_hit.m_standing; break;
             case 1: cond = &g_cfg->anti_hit.m_moving; break;
@@ -577,7 +592,7 @@ void c_menu::draw_antiaim_tab() {
         }
         
         if (cond) {
-            group_box(conditions[selected_condition], ImVec2(0, 300), [this, cond]() {
+            auto lambda_func = [this, cond]() {
                 checkbox_ex("Override Default", &cond->m_override);
                 
                 if (cond->m_override) {
@@ -596,7 +611,8 @@ void c_menu::draw_antiaim_tab() {
                         slider_int_ex("Jitter Range", &cond->m_jitter_amount, 0, 180);
                     }
                 }
-            });
+            };
+            group_box(conditions[selected_condition], ImVec2(0, 300), lambda_func);
         }
         
         ImGui::EndChild();

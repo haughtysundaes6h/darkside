@@ -369,9 +369,9 @@ public:
 
 	float length_sqr( );
 
-	float length_2d( );
+	float length_2d( ) const;
 
-	float length_2d_sqr( );
+	float length_2d_sqr( ) const;
 
 	vec3_t normalize( );
 

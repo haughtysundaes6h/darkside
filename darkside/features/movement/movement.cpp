@@ -414,8 +414,8 @@ void c_movement::limit_speed(c_user_cmd* user_cmd, c_cs_player_pawn* pawn,
         
         float strength = std::clamp((speed - max_speed) / (weapon_speed * 0.12f), 0.0f, 1.0f);
         
-        base->set_forwardmove(std::clamp(-(velocity.x * cosine + velocity.y * sine) / speed * strength, -1.0f, 1.0f));
-        base->set_leftmove(std::clamp((velocity.x * sine - velocity.y * cosine) / speed * strength, -1.0f, 1.0f));
+        base->set_forwardmove(std::clamp(static_cast<float>(-(velocity.x * cosine + velocity.y * sine) / speed * strength), -1.0f, 1.0f));
+        base->set_leftmove(std::clamp(static_cast<float>((velocity.x * sine - velocity.y * cosine) / speed * strength), -1.0f, 1.0f));
         return;
     }
     
