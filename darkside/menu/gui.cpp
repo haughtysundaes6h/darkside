@@ -11,6 +11,17 @@
 // Stub for translation function
 inline const char* tr(const char* text) { return text; }
 
+// Safe font accessor: returns the font at `index` if it exists, otherwise falls back
+// to the default font. Prevents out-of-bounds crashes when the project loads fewer
+// fonts than the original Neverlose menu expected (it used indices 4 and 6).
+inline ImFont* safe_font(int index) {
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    if (atlas && index >= 0 && index < atlas->Fonts.Size && atlas->Fonts[index] != nullptr)
+        return atlas->Fonts[index];
+    ImFont* def = ImGui::GetFont();
+    return def ? def : (atlas && atlas->Fonts.Size > 0 ? atlas->Fonts[0] : nullptr);
+}
+
 // Stub for notification function - accepts both const char* and std::string
 inline void PushNotification(const char* title, const char* msg = "", int duration = 3000) {
     // Notification system disabled
@@ -223,7 +234,7 @@ void c_gui::group_box( const char* name, ImVec2 size_arg, bool scrollable ) {
     AddSquircle( GetWindowDrawList( ), pos + ImVec2( 0, header_h ), pos + size_arg, gui.border.to_im_color( ), 20 * gui.m_scale, 1.0f );
 
     // Title centred on its own ink inside the header strip, so the gap above and below it match.
-    ImFont* header_font = ImGui::GetIO().Fonts->Fonts[is_popup ? 4 : 6];
+    ImFont* header_font = safe_font(is_popup ? 4 : 6);
     ImU32 header_col = is_popup ? ImU32(gui.text.to_im_color()) : ImU32(GetColorU32( ImGuiCol_Text, 0.5f ));
     const char* header_text = tr( name );
     const float header_text_y = IM_ROUND( header_h * 0.5f - TextLineCenterY( header_font, header_font->FontSize ) );
@@ -360,7 +371,7 @@ void c_gui::column_title(const char* name) {
     // the same -3 optical lift), so a boxless column and a box beside it share one baseline.
     const ImVec2 pos = window->DC.CursorPos;
     const float  header_h = box_header_h( );
-    ImFont* font = ImGui::GetIO( ).Fonts->Fonts[ 6 ];
+    ImFont* font = safe_font( 6 );
     const float text_y = IM_ROUND( header_h * 0.5f - TextLineCenterY( font, font->FontSize ) );
     window->DrawList->AddText( font, font->FontSize, pos + ImVec2( 10 * m_scale, text_y - 3 ),
         ImGui::GetColorU32( ImGuiCol_Text, 0.5f ), tr( name ) );
@@ -391,7 +402,7 @@ void c_gui::popup_group_box( const char* name, ImVec2 size_arg ) {
     AddSquircleFilled( GetWindowDrawList( ), pos, pos + size_arg, gui.group_box_bg.to_im_color( ), 6 * gui.m_scale );
     AddSquircle( GetWindowDrawList( ), pos, pos + size_arg, gui.border.to_im_color( ), 6 * gui.m_scale, 1.0f );
 
-    ImFont* header_font = ImGui::GetIO().Fonts->Fonts[4];
+    ImFont* header_font = safe_font(4);
     GetWindowDrawList( )->AddText( header_font, header_font->FontSize, pos + ImVec2( 15 * gui.m_scale, 12 * gui.m_scale ), gui.text.to_im_color(), name );
     
     GetWindowDrawList( )->AddLine( pos + ImVec2( 10 * gui.m_scale, 38 * gui.m_scale ), pos + ImVec2( size_arg.x - (10 * gui.m_scale), 38 * gui.m_scale ), gui.border.to_im_color(), 1.0f );

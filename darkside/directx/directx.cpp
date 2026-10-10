@@ -2,6 +2,8 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
+#include "../menu/blur.hpp"
+
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
 
 LRESULT hk_wnd_proc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) {
@@ -128,6 +130,10 @@ void c_directx::start_frame( IDXGISwapChain* swap_chain ) {
 		ImGui::CreateContext( );
 		ImGui_ImplWin32_Init( m_window );
 		ImGui_ImplDX11_Init( m_device, m_device_context );
+
+		// Wire the blur module to our D3D11 device/context so draw_blur_rounded() works.
+		blur::device = m_device;
+		blur::context = m_device_context;
 
 		g_render->initialize( );
 	} );
