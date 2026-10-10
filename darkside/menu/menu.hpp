@@ -7,21 +7,18 @@ class c_menu {
 public:
     bool m_opened = false;
     bool m_block_attack_until_release = false;
-    
+
     void init();
     void render();
-    void draw(); // Alias for render
+    void draw();
     void toggle() { m_opened = !m_opened; }
     bool is_opened() const { return m_opened; }
     bool blocks_attacks() const { return m_block_attack_until_release; }
-    void on_create_move() { /* Called from hooks */ }
-    
-    c_gui& gui() { return m_gui; }
-    
+    void on_create_move() { }
+
+    c_gui& ui() { return ::gui; }
+
 private:
-    c_gui m_gui;
-    
-    void draw_tabs();
     void draw_rage();
     void draw_legit();
     void draw_antiaim();

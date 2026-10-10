@@ -127,13 +127,15 @@
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)sdk\includes\imgui;$(ProjectDir)menu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /Zc:char8_t- %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>freetype.lib;libprotobufd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;windowscodecs.lib;WindowsApp.lib;Shell32.lib;Ole32.lib;Winhttp.lib;libprotobufd.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -148,6 +150,8 @@
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)sdk\includes\imgui;$(ProjectDir)menu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /Zc:char8_t- %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
@@ -156,7 +160,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>freetype.lib;libprotobuf.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;windowscodecs.lib;WindowsApp.lib;Shell32.lib;Ole32.lib;Winhttp.lib;libprotobuf.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -177,12 +181,15 @@
     <ClCompile Include="menu\menu.cpp" />
     <ClCompile Include="menu\gui.cpp" />
     <ClCompile Include="menu\blur.cpp" />
+    <ClCompile Include="menu\shader_bg.cpp" />
+    <ClCompile Include="menu\spotify.cpp" />
+    <ClCompile Include="menu\gifbg.cpp" />
+    <ClCompile Include="menu\runtime.cpp" />
     <ClCompile Include="render\render.cpp" />
     <ClCompile Include="sdk\config_system\config_system.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui_demo.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui_draw.cpp" />
-    <ClCompile Include="sdk\includes\imgui\imgui_freetype.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui_impl_dx11.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui_stdlib.cpp" />
@@ -397,6 +404,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="valve\classes\game_enums.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="menu_fonts.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

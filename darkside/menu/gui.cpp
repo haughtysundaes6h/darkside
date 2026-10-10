@@ -1,34 +1,12 @@
 #include "gui.hpp"
 #include "hashes.hpp"
-// #include "notification.hpp"  // Disabled - not needed for basic functionality
-// #include "shader_bg.hpp"     // Disabled - not needed for basic functionality
-// #include "spotify.hpp"        // Disabled - not needed for basic functionality
-// #include "gifbg.hpp"          // Disabled - not needed for basic functionality
+#include "notification.hpp"
+#include "shader_bg.hpp"
+#include "spotify.hpp"
+#include "gifbg.hpp"
 #include <algorithm>
 #include <cstring>
 #include <math.h>
-
-// Stub for translation function
-inline const char* tr(const char* text) { return text; }
-
-// Safe font accessor: returns the font at `index` if it exists, otherwise falls back
-// to the default font. Prevents out-of-bounds crashes when the project loads fewer
-// fonts than the original Neverlose menu expected (it used indices 4 and 6).
-inline ImFont* safe_font(int index) {
-    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
-    if (atlas && index >= 0 && index < atlas->Fonts.Size && atlas->Fonts[index] != nullptr)
-        return atlas->Fonts[index];
-    ImFont* def = ImGui::GetFont();
-    return def ? def : (atlas && atlas->Fonts.Size > 0 ? atlas->Fonts[0] : nullptr);
-}
-
-// Stub for notification function - accepts both const char* and std::string
-inline void PushNotification(const char* title, const char* msg = "", int duration = 3000) {
-    // Notification system disabled
-}
-inline void PushNotification(const char* title, const std::string& msg, int duration = 3000) {
-    PushNotification(title, msg.c_str(), duration);
-}
 
 using namespace ImGui;
 
@@ -234,7 +212,7 @@ void c_gui::group_box( const char* name, ImVec2 size_arg, bool scrollable ) {
     AddSquircle( GetWindowDrawList( ), pos + ImVec2( 0, header_h ), pos + size_arg, gui.border.to_im_color( ), 20 * gui.m_scale, 1.0f );
 
     // Title centred on its own ink inside the header strip, so the gap above and below it match.
-    ImFont* header_font = safe_font(is_popup ? 4 : 6);
+    ImFont* header_font = ImGui::GetIO().Fonts->Fonts[is_popup ? 4 : 6];
     ImU32 header_col = is_popup ? ImU32(gui.text.to_im_color()) : ImU32(GetColorU32( ImGuiCol_Text, 0.5f ));
     const char* header_text = tr( name );
     const float header_text_y = IM_ROUND( header_h * 0.5f - TextLineCenterY( header_font, header_font->FontSize ) );
@@ -371,7 +349,7 @@ void c_gui::column_title(const char* name) {
     // the same -3 optical lift), so a boxless column and a box beside it share one baseline.
     const ImVec2 pos = window->DC.CursorPos;
     const float  header_h = box_header_h( );
-    ImFont* font = safe_font( 6 );
+    ImFont* font = ImGui::GetIO( ).Fonts->Fonts[ 6 ];
     const float text_y = IM_ROUND( header_h * 0.5f - TextLineCenterY( font, font->FontSize ) );
     window->DrawList->AddText( font, font->FontSize, pos + ImVec2( 10 * m_scale, text_y - 3 ),
         ImGui::GetColorU32( ImGuiCol_Text, 0.5f ), tr( name ) );
@@ -402,7 +380,7 @@ void c_gui::popup_group_box( const char* name, ImVec2 size_arg ) {
     AddSquircleFilled( GetWindowDrawList( ), pos, pos + size_arg, gui.group_box_bg.to_im_color( ), 6 * gui.m_scale );
     AddSquircle( GetWindowDrawList( ), pos, pos + size_arg, gui.border.to_im_color( ), 6 * gui.m_scale, 1.0f );
 
-    ImFont* header_font = safe_font(4);
+    ImFont* header_font = ImGui::GetIO().Fonts->Fonts[4];
     GetWindowDrawList( )->AddText( header_font, header_font->FontSize, pos + ImVec2( 15 * gui.m_scale, 12 * gui.m_scale ), gui.text.to_im_color(), name );
     
     GetWindowDrawList( )->AddLine( pos + ImVec2( 10 * gui.m_scale, 38 * gui.m_scale ), pos + ImVec2( size_arg.x - (10 * gui.m_scale), 38 * gui.m_scale ), gui.border.to_im_color(), 1.0f );
@@ -548,7 +526,7 @@ void c_gui::popup_surface(ImDrawList* draw, ImVec2 min, ImVec2 max, float roundi
     // Same animated background the menu carries, over this card's own fill and under its contents,
     // continuing the menu's image rather than starting its own - every card, tooltip and option
     // list comes through here, so they all pick it up.
-    // shader_bg::draw_into(draw, min, max, radius, alpha);  // Disabled - shader_bg not available
+    shader_bg::draw_into(draw, min, max, radius, alpha);
     if (border)
         draw->AddRect(min, max, popup_border.to_im_color(0.75f * alpha, false), radius, 0, 1.f * m_scale);
     draw->PopClipRect();
@@ -835,7 +813,7 @@ bool c_gui::begin_popup_card(const char* popup_name, bool& wants_open, float ani
         // real size is known, so there is nothing to catch up on.
         ImVec2 pivot(0.f, 0.f);
 
-        if (ImGuiWindow* main_win = ImGui::FindWindowByName("Hello, world!")) {
+        if (ImGuiWindow* main_win = ImGui::FindWindowByName("DARKSIDE##neverlose")) {
             const float top = main_win->Pos.y, bottom = main_win->Pos.y + main_win->Size.y;
             if (exact_pos) {
                 // click_pos is an anchor the caller picked (e.g. just under its button), not the
@@ -959,7 +937,7 @@ void c_gui::popup_position( const char* name, ImVec2 click_pos, ImVec2 default_s
 
     ImGuiWindow* win = g.OpenPopupStack[ my_idx ].Window;
     const ImVec2 my_size = win ? win->Size : default_size;
-    ImGuiWindow* main_win = ImGui::FindWindowByName( "Hello, world!" );
+    ImGuiWindow* main_win = ImGui::FindWindowByName( "DARKSIDE##neverlose" );
 
     ImVec2 target = click_pos;
     if ( click_pos.x == -1.f && click_pos.y == -1.f ) // never clicked: fall back to the menu's center
@@ -1456,7 +1434,7 @@ bool c_gui::window_begin( const char* id, bool* open, ImVec2 size, bool* dots_cl
 
     // First frame up: centre it on the menu (and keep whatever the user dragged it to after that).
     if ( m_window_open_frame.find( wid ) == m_window_open_frame.end( ) ) {
-        ImGuiWindow* menu = ImGui::FindWindowByName( "Hello, world!" );
+        ImGuiWindow* menu = ImGui::FindWindowByName( "DARKSIDE##neverlose" );
         const ImVec2 center = menu ? menu->Pos + menu->Size * 0.5f : ImGui::GetIO( ).DisplaySize * 0.5f;
         state.pos = center - full * 0.5f;
         state.drag = state.drag_target = ImVec2( 0.f, 0.f );
@@ -1554,7 +1532,7 @@ bool c_gui::overlay_begin( const char* id, bool* open, bool* dots_clicked ) {
     if ( alpha <= 0.f )
         return false;
 
-    ImGuiWindow* menu = ImGui::FindWindowByName( "Hello, world!" );
+    ImGuiWindow* menu = ImGui::FindWindowByName( "DARKSIDE##neverlose" );
     if ( !menu )
         return false;
 
@@ -3190,7 +3168,7 @@ void c_gui::color_card_body( ImGuiID state_id, ImGuiID mode_id, ImGuiID view_id,
 
     if ( allow_gradient ) {
         const ImVec2 isz = font->CalcTextSizeA( fs, FLT_MAX, 0.f, ICON_FA_ADJUST );
-        const ImU32 icol = col->gradient ? ImU32(accent_color.to_im_color()) : ImU32(cfg_mix( c_dim, c_text, grad_t ));
+        const ImU32 icol = col->gradient ? ImU32(accent_color.to_im_color( )) : ImU32(cfg_mix( c_dim, c_text, grad_t ));
         draw->AddText( row_font, fs, ImVec2( IM_ROUND( btn_x + ( btn_w - isz.x ) * 0.5f ), IM_ROUND( ry + row_h * 0.5f - TextInkCenterY( row_font, fs, ICON_FA_ADJUST ) ) ), icol, ICON_FA_ADJUST );
     }
 
@@ -3483,832 +3461,819 @@ bool c_gui::popup_toggle( const char* icon, const char* label, bool* v ) {
 // The colour and the motif behind the artwork are derived from the track itself, so there is
 // always something in the sleeve while the real cover is still being fetched.
 
-// ============================================================================
-// SPOTIFY/GIFBG INTEGRATION DISABLED - The full implementation is commented
-// below. Stubs are provided so the menu compiles without these dependencies.
-// ============================================================================
+namespace {
 
-void c_gui::spotify_tick() {
-    // Disabled - spotify integration not available
+    struct sp_ui_t {
+        float play_t = 0.f;      // 0 paused .. 1 playing - the meter, the glow and the glyph ride it
+        float alive_t = 0.f;     // 0 disconnected .. 1 connected
+        float change_t = 1.f;    // 0 the instant the track changed .. 1 settled
+        float fill_t = 0.f;      // the progress fill, eased so a seek slides instead of jumping
+        float beat = 0.f;        // free-running phase for anything that has to breathe
+        bool  seeking = false;
+        float lyrics_t = 0.f;      // 0 panel closed .. 1 open, and the card widens with it
+        float lyrics_scroll = 0.f; // eased, so the active line glides into place
+        int   lyrics_line = -1;
+        float lyrics_line_t = 1.f; // 0 the instant the active line changed .. 1 settled
+        std::string last_title;
+
+        void tick( float dt, const spotify::snapshot_t& s ) {
+            dt = ImClamp( dt, 0.f, 0.1f );
+            play_t  = ImLerp( play_t,  s.playing ? 1.f : 0.f, 1.f - expf( -dt * 9.f ) );
+            alive_t = ImLerp( alive_t, s.status == spotify::status_t::connected ? 1.f : 0.f,
+                              1.f - expf( -dt * 8.f ) );
+            beat += dt * ( 1.1f + 2.4f * play_t );
+
+            if ( s.title != last_title ) {
+                last_title = s.title;
+                change_t = 0.f;
+            }
+            change_t = ImMin( 1.f, change_t + dt * 3.4f );
+
+            const float target = s.duration > 0.0 ? ( float )ImSaturate( s.position / s.duration ) : 0.f;
+            fill_t = seeking ? target : ImLerp( fill_t, target, 1.f - expf( -dt * 20.f ) );
+
+            lyrics_line_t = ImMin( 1.f, lyrics_line_t + dt * 4.5f );
+        }
+    } sp_ui;
+
+    void sp_format_time( char* buf, int size, double seconds ) {
+        const int total = ( int )ImMax( 0.0, seconds );
+        ImFormatString( buf, size, "%d:%02d", total / 60, total % 60 );
+    }
+
+    // The sleeve's own palette, hashed out of the track so it is stable for that track and
+    // different for the next one.
+    void sp_palette( const std::string& key, ImU32& a, ImU32& b, int& motif ) {
+        unsigned int h = 2166136261u;
+        for ( char c : key ) {
+            h ^= ( unsigned char )c;
+            h *= 16777619u;
+        }
+        const float hue = ( h & 0xffffu ) / 65535.f;
+        float r = 0.f, g = 0.f, bl = 0.f;
+        ImGui::ColorConvertHSVtoRGB( hue, 0.58f, 0.26f, r, g, bl );
+        a = IM_COL32( ( int )( r * 255.f ), ( int )( g * 255.f ), ( int )( bl * 255.f ), 255 );
+        ImGui::ColorConvertHSVtoRGB( ImFmod( hue + 0.11f, 1.f ), 0.66f, 0.82f, r, g, bl );
+        b = IM_COL32( ( int )( r * 255.f ), ( int )( g * 255.f ), ( int )( bl * 255.f ), 255 );
+        motif = ( int )( ( h >> 17 ) & 3u );
+    }
+
+    void sp_draw_cover( ImDrawList* draw, ImU32 col_a, ImU32 col_b, int motif, ImVec2 min, ImVec2 max,
+                        float rounding, float alpha, float phase ) {
+        if ( alpha <= 0.004f )
+            return;
+
+        const ImU32 white = IM_COL32( 255, 255, 255, ( int )( 255.f * alpha ) );
+        const int v0 = draw->VtxBuffer.Size;
+        draw->AddRectFilled( min, max, white, rounding );
+        ImGui::ShadeVertsLinearColorGradientKeepAlpha( draw, v0, draw->VtxBuffer.Size,
+            ImVec2( min.x, min.y ), ImVec2( max.x, max.y ), col_a, col_b );
+
+        const ImVec2 c( ( min.x + max.x ) * 0.5f, ( min.y + max.y ) * 0.5f );
+        const float  sz = max.x - min.x;
+        const ImU32  ink = IM_COL32( 255, 255, 255, ( int )( 46.f * alpha ) );
+        const ImU32  ink2 = IM_COL32( 0, 0, 0, ( int )( 50.f * alpha ) );
+
+        // The motif is inset far enough that this square clip never reaches the rounded corners.
+        draw->PushClipRect( min, max, true );
+        switch ( motif ) {
+        case 0:
+            for ( int i = 1; i <= 4; ++i )
+                draw->AddCircle( c, sz * ( 0.10f + i * 0.085f ), i & 1 ? ink : ink2, 40, sz * 0.022f );
+            draw->AddCircleFilled( c, sz * 0.055f, ink, 24 );
+            break;
+        case 1:
+            for ( int i = -3; i <= 5; ++i ) {
+                const float x = min.x + sz * ( 0.16f * i );
+                draw->AddQuadFilled( ImVec2( x, max.y ), ImVec2( x + sz * 0.07f, max.y ),
+                                     ImVec2( x + sz * 0.07f + sz, min.y ), ImVec2( x + sz, min.y ),
+                                     i & 1 ? ink : ink2 );
+            }
+            break;
+        case 2:
+            draw->AddCircleFilled( ImVec2( c.x + sz * 0.10f, c.y - sz * 0.06f ), sz * 0.30f, ink, 48 );
+            draw->AddCircleFilled( ImVec2( c.x - sz * 0.14f, c.y + sz * 0.14f ), sz * 0.20f, ink2, 40 );
+            break;
+        default:
+            for ( int gy = 0; gy < 5; ++gy )
+                for ( int gx = 0; gx < 5; ++gx )
+                    draw->AddCircleFilled( ImVec2( min.x + sz * ( 0.18f + gx * 0.16f ),
+                                                   min.y + sz * ( 0.18f + gy * 0.16f ) ),
+                                           sz * ( ( gx + gy ) & 1 ? 0.030f : 0.016f ),
+                                           ( gx + gy ) & 1 ? ink : ink2, 16 );
+            break;
+        }
+
+        const float band = sz * 0.34f, travel = min.x - band + ( sz + band * 2.f ) * ImFmod( phase, 1.f );
+        draw->AddQuadFilled( ImVec2( travel, max.y ), ImVec2( travel + band, max.y ),
+                             ImVec2( travel + band + sz * 0.4f, min.y ), ImVec2( travel + sz * 0.4f, min.y ),
+                             IM_COL32( 255, 255, 255, ( int )( 16.f * alpha ) ) );
+        draw->PopClipRect( );
+
+        draw->AddRect( min, max, IM_COL32( 255, 255, 255, ( int )( 28.f * alpha ) ), rounding, 0, 1.f );
+    }
 }
 
-void c_gui::spotify_widget_draw() {
-    // Disabled - spotify widget not available
+void c_gui::spotify_tick( ) {
+    const float dt = ImGui::GetIO( ).DeltaTime;
+    spotify::tick( dt );
+    sp_ui.tick( dt, spotify::state( ) );
+
+    const spotify::snapshot_t& now = spotify::state( );
+    gifbg::set_enabled( spotify_gif );
+    gifbg::set_track( now.artist, now.title );
+    gifbg::tick( dt );
 }
 
-// SPOTIFY_DISABLED: namespace {
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     struct sp_ui_t {
-// SPOTIFY_DISABLED:         float play_t = 0.f;      // 0 paused .. 1 playing - the meter, the glow and the glyph ride it
-// SPOTIFY_DISABLED:         float alive_t = 0.f;     // 0 disconnected .. 1 connected
-// SPOTIFY_DISABLED:         float change_t = 1.f;    // 0 the instant the track changed .. 1 settled
-// SPOTIFY_DISABLED:         float fill_t = 0.f;      // the progress fill, eased so a seek slides instead of jumping
-// SPOTIFY_DISABLED:         float beat = 0.f;        // free-running phase for anything that has to breathe
-// SPOTIFY_DISABLED:         bool  seeking = false;
-// SPOTIFY_DISABLED:         float lyrics_t = 0.f;      // 0 panel closed .. 1 open, and the card widens with it
-// SPOTIFY_DISABLED:         float lyrics_scroll = 0.f; // eased, so the active line glides into place
-// SPOTIFY_DISABLED:         int   lyrics_line = -1;
-// SPOTIFY_DISABLED:         float lyrics_line_t = 1.f; // 0 the instant the active line changed .. 1 settled
-// SPOTIFY_DISABLED:         std::string last_title;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         void tick( float dt, const spotify::snapshot_t& s ) {
-// SPOTIFY_DISABLED:             dt = ImClamp( dt, 0.f, 0.1f );
-// SPOTIFY_DISABLED:             play_t  = ImLerp( play_t,  s.playing ? 1.f : 0.f, 1.f - expf( -dt * 9.f ) );
-// SPOTIFY_DISABLED:             alive_t = ImLerp( alive_t, s.status == spotify::status_t::connected ? 1.f : 0.f,
-// SPOTIFY_DISABLED:                               1.f - expf( -dt * 8.f ) );
-// SPOTIFY_DISABLED:             beat += dt * ( 1.1f + 2.4f * play_t );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             if ( s.title != last_title ) {
-// SPOTIFY_DISABLED:                 last_title = s.title;
-// SPOTIFY_DISABLED:                 change_t = 0.f;
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             change_t = ImMin( 1.f, change_t + dt * 3.4f );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             const float target = s.duration > 0.0 ? ( float )ImSaturate( s.position / s.duration ) : 0.f;
-// SPOTIFY_DISABLED:             fill_t = seeking ? target : ImLerp( fill_t, target, 1.f - expf( -dt * 20.f ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             lyrics_line_t = ImMin( 1.f, lyrics_line_t + dt * 4.5f );
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED:     } sp_ui;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     void sp_format_time( char* buf, int size, double seconds ) {
-// SPOTIFY_DISABLED:         const int total = ( int )ImMax( 0.0, seconds );
-// SPOTIFY_DISABLED:         ImFormatString( buf, size, "%d:%02d", total / 60, total % 60 );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // The sleeve's own palette, hashed out of the track so it is stable for that track and
-// SPOTIFY_DISABLED:     // different for the next one.
-// SPOTIFY_DISABLED:     void sp_palette( const std::string& key, ImU32& a, ImU32& b, int& motif ) {
-// SPOTIFY_DISABLED:         unsigned int h = 2166136261u;
-// SPOTIFY_DISABLED:         for ( char c : key ) {
-// SPOTIFY_DISABLED:             h ^= ( unsigned char )c;
-// SPOTIFY_DISABLED:             h *= 16777619u;
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED:         const float hue = ( h & 0xffffu ) / 65535.f;
-// SPOTIFY_DISABLED:         float r = 0.f, g = 0.f, bl = 0.f;
-// SPOTIFY_DISABLED:         ImGui::ColorConvertHSVtoRGB( hue, 0.58f, 0.26f, r, g, bl );
-// SPOTIFY_DISABLED:         a = IM_COL32( ( int )( r * 255.f ), ( int )( g * 255.f ), ( int )( bl * 255.f ), 255 );
-// SPOTIFY_DISABLED:         ImGui::ColorConvertHSVtoRGB( ImFmod( hue + 0.11f, 1.f ), 0.66f, 0.82f, r, g, bl );
-// SPOTIFY_DISABLED:         b = IM_COL32( ( int )( r * 255.f ), ( int )( g * 255.f ), ( int )( bl * 255.f ), 255 );
-// SPOTIFY_DISABLED:         motif = ( int )( ( h >> 17 ) & 3u );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     void sp_draw_cover( ImDrawList* draw, ImU32 col_a, ImU32 col_b, int motif, ImVec2 min, ImVec2 max,
-// SPOTIFY_DISABLED:                         float rounding, float alpha, float phase ) {
-// SPOTIFY_DISABLED:         if ( alpha <= 0.004f )
-// SPOTIFY_DISABLED:             return;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const ImU32 white = IM_COL32( 255, 255, 255, ( int )( 255.f * alpha ) );
-// SPOTIFY_DISABLED:         const int v0 = draw->VtxBuffer.Size;
-// SPOTIFY_DISABLED:         draw->AddRectFilled( min, max, white, rounding );
-// SPOTIFY_DISABLED:         ImGui::ShadeVertsLinearColorGradientKeepAlpha( draw, v0, draw->VtxBuffer.Size,
-// SPOTIFY_DISABLED:             ImVec2( min.x, min.y ), ImVec2( max.x, max.y ), col_a, col_b );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const ImVec2 c( ( min.x + max.x ) * 0.5f, ( min.y + max.y ) * 0.5f );
-// SPOTIFY_DISABLED:         const float  sz = max.x - min.x;
-// SPOTIFY_DISABLED:         const ImU32  ink = IM_COL32( 255, 255, 255, ( int )( 46.f * alpha ) );
-// SPOTIFY_DISABLED:         const ImU32  ink2 = IM_COL32( 0, 0, 0, ( int )( 50.f * alpha ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // The motif is inset far enough that this square clip never reaches the rounded corners.
-// SPOTIFY_DISABLED:         draw->PushClipRect( min, max, true );
-// SPOTIFY_DISABLED:         switch ( motif ) {
-// SPOTIFY_DISABLED:         case 0:
-// SPOTIFY_DISABLED:             for ( int i = 1; i <= 4; ++i )
-// SPOTIFY_DISABLED:                 draw->AddCircle( c, sz * ( 0.10f + i * 0.085f ), i & 1 ? ink : ink2, 40, sz * 0.022f );
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( c, sz * 0.055f, ink, 24 );
-// SPOTIFY_DISABLED:             break;
-// SPOTIFY_DISABLED:         case 1:
-// SPOTIFY_DISABLED:             for ( int i = -3; i <= 5; ++i ) {
-// SPOTIFY_DISABLED:                 const float x = min.x + sz * ( 0.16f * i );
-// SPOTIFY_DISABLED:                 draw->AddQuadFilled( ImVec2( x, max.y ), ImVec2( x + sz * 0.07f, max.y ),
-// SPOTIFY_DISABLED:                                      ImVec2( x + sz * 0.07f + sz, min.y ), ImVec2( x + sz, min.y ),
-// SPOTIFY_DISABLED:                                      i & 1 ? ink : ink2 );
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             break;
-// SPOTIFY_DISABLED:         case 2:
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( ImVec2( c.x + sz * 0.10f, c.y - sz * 0.06f ), sz * 0.30f, ink, 48 );
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( ImVec2( c.x - sz * 0.14f, c.y + sz * 0.14f ), sz * 0.20f, ink2, 40 );
-// SPOTIFY_DISABLED:             break;
-// SPOTIFY_DISABLED:         default:
-// SPOTIFY_DISABLED:             for ( int gy = 0; gy < 5; ++gy )
-// SPOTIFY_DISABLED:                 for ( int gx = 0; gx < 5; ++gx )
-// SPOTIFY_DISABLED:                     draw->AddCircleFilled( ImVec2( min.x + sz * ( 0.18f + gx * 0.16f ),
-// SPOTIFY_DISABLED:                                                    min.y + sz * ( 0.18f + gy * 0.16f ) ),
-// SPOTIFY_DISABLED:                                            sz * ( ( gx + gy ) & 1 ? 0.030f : 0.016f ),
-// SPOTIFY_DISABLED:                                            ( gx + gy ) & 1 ? ink : ink2, 16 );
-// SPOTIFY_DISABLED:             break;
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const float band = sz * 0.34f, travel = min.x - band + ( sz + band * 2.f ) * ImFmod( phase, 1.f );
-// SPOTIFY_DISABLED:         draw->AddQuadFilled( ImVec2( travel, max.y ), ImVec2( travel + band, max.y ),
-// SPOTIFY_DISABLED:                              ImVec2( travel + band + sz * 0.4f, min.y ), ImVec2( travel + sz * 0.4f, min.y ),
-// SPOTIFY_DISABLED:                              IM_COL32( 255, 255, 255, ( int )( 16.f * alpha ) ) );
-// SPOTIFY_DISABLED:         draw->PopClipRect( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         draw->AddRect( min, max, IM_COL32( 255, 255, 255, ( int )( 28.f * alpha ) ), rounding, 0, 1.f );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED: void c_gui::spotify_tick( ) {
-// SPOTIFY_DISABLED:     const float dt = ImGui::GetIO( ).DeltaTime;
-// SPOTIFY_DISABLED:     spotify::tick( dt );
-// SPOTIFY_DISABLED:     sp_ui.tick( dt, spotify::state( ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     const spotify::snapshot_t& now = spotify::state( );
-// SPOTIFY_DISABLED:     gifbg::set_enabled( spotify_gif );
-// SPOTIFY_DISABLED:     gifbg::set_track( now.artist, now.title );
-// SPOTIFY_DISABLED:     gifbg::tick( dt );
-// SPOTIFY_DISABLED: }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED: void c_gui::spotify_widget_draw( ) {
-// SPOTIFY_DISABLED:     const float s = m_scale;
-// SPOTIFY_DISABLED:     ImGuiIO& io = ImGui::GetIO( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // Toggled, not opened: once the switch in the profile card is on, the widget stays where the
-// SPOTIFY_DISABLED:     // user parked it until they turn it off - clicking elsewhere must not dismiss it, which is
-// SPOTIFY_DISABLED:     // exactly what a popup would have done.
-// SPOTIFY_DISABLED:     static float shown = 0.f;
-// SPOTIFY_DISABLED:     static float bg_t = 0.f, bg_drift = 0.f; // the card backdrop's fade and its drift clock
-// SPOTIFY_DISABLED:     shown = ImLerp( shown, spotify_widget ? 1.f : 0.f, 1.f - expf( -ImClamp( io.DeltaTime, 0.f, 0.1f ) * 12.f ) );
-// SPOTIFY_DISABLED:     if ( !spotify_widget && shown <= 0.004f )
-// SPOTIFY_DISABLED:         return;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // The panel wants room for 22px type, so the whole card eases wider while it is open rather
-// SPOTIFY_DISABLED:     // than wrapping every line in half.
-// SPOTIFY_DISABLED:     const float content_w = ImLerp( 268.f, 340.f, sp_ui.lyrics_t ) * s;
-// SPOTIFY_DISABLED:     const float pad = 11.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // header 24 + sleeve 78 + progress 30 + transport 44 = 176 of advance, and the buttons' ink
-// SPOTIFY_DISABLED:     // stops 6 short of that at 170. 173 leaves the same air under them as the padding leaves over
-// SPOTIFY_DISABLED:     // the header. With lyrics the panel starts 6 below the ink and keeps 3 under itself.
-// SPOTIFY_DISABLED:     const spotify::snapshot_t& st = spotify::state( );
-// SPOTIFY_DISABLED:     const bool  connected  = st.status == spotify::status_t::connected;
-// SPOTIFY_DISABLED:     const float lyrics_h   = connected ? IM_ROUND( 164.f * s * sp_ui.lyrics_t ) : 0.f;
-// SPOTIFY_DISABLED:     const float lyrics_top = 176.f * s;
-// SPOTIFY_DISABLED:     const float total_h    = !connected        ? 145.f * s
-// SPOTIFY_DISABLED:                            : lyrics_h > 1.f    ? lyrics_top + lyrics_h + 3.f * s
-// SPOTIFY_DISABLED:                                                : 173.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // Dragged the way the menu is dragged: the cursor sets a target and the window eases toward
-// SPOTIFY_DISABLED:     // it, which is what gives the move its trailing weight instead of snapping to the pointer.
-// SPOTIFY_DISABLED:     // ImGui still owns the grab itself - it already knows which press belongs to the window and
-// SPOTIFY_DISABLED:     // which belongs to a button on it - and this only re-times the motion it asks for.
-// SPOTIFY_DISABLED:     static bool   drag_ready = false;
-// SPOTIFY_DISABLED:     static ImVec2 drag_pos, drag_target;
-// SPOTIFY_DISABLED:     if ( drag_ready ) {
-// SPOTIFY_DISABLED:         drag_pos = ImLerp( drag_pos, drag_target, 1.f - expf( -9.f * ImMin( io.DeltaTime, 0.05f ) ) );
-// SPOTIFY_DISABLED:         if ( ImLengthSqr( drag_target - drag_pos ) < 0.25f )
-// SPOTIFY_DISABLED:             drag_pos = drag_target;
-// SPOTIFY_DISABLED:         ImGui::SetNextWindowPos( drag_pos, ImGuiCond_Always );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     ImGui::SetNextWindowPos( ImVec2( io.DisplaySize.x - content_w - 90.f * s, 130.f * s ), ImGuiCond_FirstUseEver );
-// SPOTIFY_DISABLED:     ImGui::SetNextWindowSize( ImVec2( content_w + pad * 2.f, total_h + pad * 2.f ), ImGuiCond_Always );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( pad, pad ) );
-// SPOTIFY_DISABLED:     ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0.f );
-// SPOTIFY_DISABLED:     ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 16.f * s );
-// SPOTIFY_DISABLED:     ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImMax( shown, 0.02f ) );
-// SPOTIFY_DISABLED:     ImGui::PushStyleColor( ImGuiCol_WindowBg, ImVec4( 0.f, 0.f, 0.f, 0.f ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // NoBackground is hijacked in imgui.cpp to mean "paint the menu chrome" for any non-popup
-// SPOTIFY_DISABLED:     // window, so the background is cleared through the style colour instead and the surface is
-// SPOTIFY_DISABLED:     // drawn by hand below. AlwaysAutoResize with a pinned width lets the two states (playing /
-// SPOTIFY_DISABLED:     // Spotify closed) size themselves.
-// SPOTIFY_DISABLED:     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-// SPOTIFY_DISABLED:         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-// SPOTIFY_DISABLED:         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoFocusOnAppearing;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     const bool visible = ImGui::Begin( "##spotify_widget", nullptr, flags );
-// SPOTIFY_DISABLED:     if ( !visible ) {
-// SPOTIFY_DISABLED:         ImGui::End( );
-// SPOTIFY_DISABLED:         ImGui::PopStyleColor( );
-// SPOTIFY_DISABLED:         ImGui::PopStyleVar( 4 );
-// SPOTIFY_DISABLED:         return;
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     ImGuiWindow* self = ImGui::GetCurrentWindow( );
-// SPOTIFY_DISABLED:     ImDrawList* draw = self->DrawList;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     if ( !drag_ready ) {
-// SPOTIFY_DISABLED:         drag_pos = drag_target = self->Pos; // whatever the ini restored, or the first-use default
-// SPOTIFY_DISABLED:         drag_ready = true;
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // While ImGui is moving this window, take the position it wants as the target and let the ease
-// SPOTIFY_DISABLED:     // above carry the window there. ActiveIdClickOffset is where inside the card the grab landed.
-// SPOTIFY_DISABLED:     if ( GImGui->MovingWindow == self ) {
-// SPOTIFY_DISABLED:         drag_target = io.MousePos - GImGui->ActiveIdClickOffset;
-// SPOTIFY_DISABLED:         drag_target.x = ImClamp( drag_target.x, -self->Size.x + 60.f * s, io.DisplaySize.x - 60.f * s );
-// SPOTIFY_DISABLED:         drag_target.y = ImClamp( drag_target.y, 0.f, io.DisplaySize.y - 32.f * s );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // Its own surface: heavier than the popup cards' 0.70, where the menu's own group box edges
-// SPOTIFY_DISABLED:     // read straight through the blur as horizontal bands across the player. No border ring either,
-// SPOTIFY_DISABLED:     // because a widget that lives on top of everything should not look like a dialog.
-// SPOTIFY_DISABLED:     {
-// SPOTIFY_DISABLED:         const ImVec2 wmin = self->Pos, wmax = self->Pos + self->Size;
-// SPOTIFY_DISABLED:         const float radius = 16.f * s;
-// SPOTIFY_DISABLED:         const float alpha = ImGui::GetStyle( ).Alpha;
-// SPOTIFY_DISABLED:         popup_shadow( draw, wmin, wmax, radius, alpha );
-// SPOTIFY_DISABLED:         draw->PushClipRect( wmin - ImVec2( 2.f, 2.f ) * s, wmax + ImVec2( 2.f, 2.f ) * s, false );
-// SPOTIFY_DISABLED:         draw_blur_rounded( draw, wmin, wmax, alpha, radius,
-// SPOTIFY_DISABLED:             ImColor( popup_bg.r, popup_bg.g, popup_bg.b, 0.80f ) );
-// SPOTIFY_DISABLED:         shader_bg::draw_into( draw, wmin, wmax, radius, alpha );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // The backdrop: the track's GIF when one is sitting in spotify_gif\, and the cover itself
-// SPOTIFY_DISABLED:         // when there is none, so the switch always answers with something that belongs to the song
-// SPOTIFY_DISABLED:         // instead of nothing or a stray file. Scrimmed back either way so the type stays legible.
-// SPOTIFY_DISABLED:         void* const  gif = gifbg::view( );
-// SPOTIFY_DISABLED:         void* const  art = ( !gif && connected ) ? spotify::art_view( ) : nullptr;
-// SPOTIFY_DISABLED:         const float  dts = ImClamp( io.DeltaTime, 0.f, 0.1f );
-// SPOTIFY_DISABLED:         bg_t = ImLerp( bg_t, ( spotify_gif && ( gif || art ) ) ? 1.f : 0.f, 1.f - expf( -dts * 9.f ) );
-// SPOTIFY_DISABLED:         bg_drift = ImFmod( bg_drift + dts, 1024.f );
-// SPOTIFY_DISABLED:         if ( bg_t > 0.004f && ( gif || art ) ) {
-// SPOTIFY_DISABLED:             // Cover-crop: keep the source's long axis and trim the short one, never letterbox.
-// SPOTIFY_DISABLED:             const float cw = ImMax( wmax.x - wmin.x, 1.f ), chh = ImMax( wmax.y - wmin.y, 1.f );
-// SPOTIFY_DISABLED:             const float aspect = cw / chh;
-// SPOTIFY_DISABLED:             float uvw = 1.f, uvh = 1.f;
-// SPOTIFY_DISABLED:             if ( aspect >= 1.f ) uvh = ImMin( 1.f, 1.f / aspect );
-// SPOTIFY_DISABLED:             else                 uvw = ImMin( 1.f, aspect );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             if ( gif ) {
-// SPOTIFY_DISABLED:                 draw->AddImageRounded( ( ImTextureID )gif, wmin, wmax,
-// SPOTIFY_DISABLED:                     ImVec2( 0.5f - uvw * 0.5f, 0.5f - uvh * 0.5f ),
-// SPOTIFY_DISABLED:                     ImVec2( 0.5f + uvw * 0.5f, 0.5f + uvh * 0.5f ),
-// SPOTIFY_DISABLED:                     IM_COL32( 255, 255, 255, ( int )( 190.f * alpha * bg_t ) ), radius );
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             else {
-// SPOTIFY_DISABLED:                 // A sleeve blown straight up over the card would read as a thumbnail behind the
-// SPOTIFY_DISABLED:                 // type, so it is over-zoomed and smeared across seventeen uv taps - the bilinear
-// SPOTIFY_DISABLED:                 // upscale does half the work - then drifted so the wash breathes. A real gaussian
-// SPOTIFY_DISABLED:                 // pass would cost a second render target for something the scrim swallows anyway.
-// SPOTIFY_DISABLED:                 const float zoom = 1.58f + 0.06f * ImSin( bg_drift * 0.32f );
-// SPOTIFY_DISABLED:                 uvw /= zoom; uvh /= zoom;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                 // Two rings and a centre, the centre last so it carries the most weight: the taps
-// SPOTIFY_DISABLED:                 // composite rather than average, so each one's alpha is solved back out of the
-// SPOTIFY_DISABLED:                 // total the stack should reach.
-// SPOTIFY_DISABLED:                 static const ImVec2 taps[ ] = {
-// SPOTIFY_DISABLED:                     ImVec2( -2.f, 0.f ), ImVec2( 2.f, 0.f ), ImVec2( 0.f, -2.f ), ImVec2( 0.f, 2.f ),
-// SPOTIFY_DISABLED:                     ImVec2( -1.4f, -1.4f ), ImVec2( 1.4f, -1.4f ), ImVec2( -1.4f, 1.4f ), ImVec2( 1.4f, 1.4f ),
-// SPOTIFY_DISABLED:                     ImVec2( -1.f, 0.f ), ImVec2( 1.f, 0.f ), ImVec2( 0.f, -1.f ), ImVec2( 0.f, 1.f ),
-// SPOTIFY_DISABLED:                     ImVec2( -0.7f, -0.7f ), ImVec2( 0.7f, -0.7f ), ImVec2( -0.7f, 0.7f ), ImVec2( 0.7f, 0.7f ),
-// SPOTIFY_DISABLED:                     ImVec2( 0.f, 0.f ) };
-// SPOTIFY_DISABLED:                 const float spread = 0.026f;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                 // The sampler wraps, so the drift has to stay inside the slack the zoom left, taps
-// SPOTIFY_DISABLED:                 // included - one uv past the edge and the far side of the sleeve folds into frame.
-// SPOTIFY_DISABLED:                 const float mx = ImMin( uvw * 0.5f + spread * 2.f, 0.5f );
-// SPOTIFY_DISABLED:                 const float my = ImMin( uvh * 0.5f + spread * 2.f, 0.5f );
-// SPOTIFY_DISABLED:                 const float cx = ImClamp( 0.5f + ( 0.5f - uvw * 0.5f ) * 0.55f * ImSin( bg_drift * 0.21f ), mx, 1.f - mx );
-// SPOTIFY_DISABLED:                 const float cy = ImClamp( 0.5f + ( 0.5f - uvh * 0.5f ) * 0.55f * ImCos( bg_drift * 0.17f ), my, 1.f - my );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                 const float total = ImClamp( 0.86f * alpha * bg_t, 0.f, 0.995f );
-// SPOTIFY_DISABLED:                 const int   ink   = ( int )( ( 1.f - ImPow( 1.f - total, 1.f / ( float )IM_ARRAYSIZE( taps ) ) ) * 255.f + 0.5f );
-// SPOTIFY_DISABLED:                 if ( ink > 0 ) {
-// SPOTIFY_DISABLED:                     for ( const ImVec2& t : taps ) {
-// SPOTIFY_DISABLED:                         const float ox = t.x * spread, oy = t.y * spread;
-// SPOTIFY_DISABLED:                         draw->AddImageRounded( ( ImTextureID )art, wmin, wmax,
-// SPOTIFY_DISABLED:                             ImVec2( cx - uvw * 0.5f + ox, cy - uvh * 0.5f + oy ),
-// SPOTIFY_DISABLED:                             ImVec2( cx + uvw * 0.5f + ox, cy + uvh * 0.5f + oy ),
-// SPOTIFY_DISABLED:                             IM_COL32( 255, 255, 255, ink ), radius );
-// SPOTIFY_DISABLED:                     }
-// SPOTIFY_DISABLED:                 }
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             draw->AddRectFilled( wmin, wmax,
-// SPOTIFY_DISABLED:                 IM_COL32( 6, 8, 14, ( int )( ( gif ? 150.f : 172.f ) * alpha * bg_t ) ), radius );
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED:         draw->PopClipRect( );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED:     ImFontAtlas* atlas = io.Fonts;
-// SPOTIFY_DISABLED:     ImFont* bold  = atlas->Fonts[ 4 ]; // Inter-SemiBold 17
-// SPOTIFY_DISABLED:     ImFont* micro = atlas->Fonts[ 6 ]; // Inter-SemiBold 12.5
-// SPOTIFY_DISABLED:     ImFont* small = small_font( );     // Inter-Medium 13 + FA 13
-// SPOTIFY_DISABLED:     ImFont* body  = atlas->Fonts[ 0 ]; // Inter-Medium 15 + FA 14 - every icon on this card
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     const float ca = ImGui::GetStyle( ).Alpha;
-// SPOTIFY_DISABLED:     const float w = content_w;
-// SPOTIFY_DISABLED:     const ImVec2 origin = ImGui::GetCursorScreenPos( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     const ImVec4 c_text = text.to_vec4( 1.f, false );
-// SPOTIFY_DISABLED:     const ImVec4 c_dim  = text_disabled.to_vec4( 1.f, false );
-// SPOTIFY_DISABLED:     const ImVec4 c_acc  = accent_color.to_vec4( 1.f, false );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     const float ease = sp_ui.change_t * sp_ui.change_t * ( 3.f - 2.f * sp_ui.change_t );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // A local button: an invisible hit box, an animated plate, and a glyph centred on its own ink.
-// SPOTIFY_DISABLED:     const auto icon_button = [ & ]( const char* id, ImVec2 centre, float box, const char* glyph,
-// SPOTIFY_DISABLED:                                     ImFont* font, float fs, float lit, float scale_hot, bool enabled ) -> bool {
-// SPOTIFY_DISABLED:         const ImVec2 half( box * 0.5f, box * 0.5f );
-// SPOTIFY_DISABLED:         ImGui::SetCursorScreenPos( centre - half );
-// SPOTIFY_DISABLED:         const bool pressed = ImGui::InvisibleButton( id, ImVec2( box, box ) ) && enabled;
-// SPOTIFY_DISABLED:         const bool hovered = enabled && ImGui::IsItemHovered( );
-// SPOTIFY_DISABLED:         const bool held    = enabled && ImGui::IsItemActive( );
-// SPOTIFY_DISABLED:         const float t = cfg_anim( ImGui::GetID( id ), hovered );
-// SPOTIFY_DISABLED:         const float k = 1.f + scale_hot * t - ( held ? 0.08f : 0.f );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( t > 0.01f )
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( centre, box * 0.5f * k, frame_inactive.to_im_color( 0.55f * t ), 28 );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const ImVec2 sz = font->CalcTextSizeA( fs, FLT_MAX, 0.f, glyph );
-// SPOTIFY_DISABLED:         ImU32 col = cfg_mix( c_dim, lit > 0.5f ? c_acc : c_text, ImMax( t, lit ) );
-// SPOTIFY_DISABLED:         if ( !enabled )
-// SPOTIFY_DISABLED:             col = text_disabled.to_im_color( 0.45f );
-// SPOTIFY_DISABLED:         draw->AddText( font, fs, ImVec2( IM_ROUND( centre.x - sz.x * 0.5f ),
-// SPOTIFY_DISABLED:                                          IM_ROUND( centre.y - TextInkCenterY( font, fs, glyph ) ) ), col, glyph );
-// SPOTIFY_DISABLED:         return pressed;
-// SPOTIFY_DISABLED:     };
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     bool opts_clicked = false;
-// SPOTIFY_DISABLED:     float y = origin.y;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // ---- header -------------------------------------------------------------------------------
-// SPOTIFY_DISABLED:     {
-// SPOTIFY_DISABLED:         const float fs = micro->FontSize;
-// SPOTIFY_DISABLED:         const ImVec2 icon_sz = body->CalcTextSizeA( body->FontSize, FLT_MAX, 0.f, ICON_FA_MUSIC );
-// SPOTIFY_DISABLED:         draw->AddText( body, body->FontSize, ImVec2( IM_ROUND( origin.x ), IM_ROUND( y + 2.f * s ) ),
-// SPOTIFY_DISABLED:             accent_color.to_im_color( ), ICON_FA_MUSIC );
-// SPOTIFY_DISABLED:         draw->AddText( micro, fs, ImVec2( IM_ROUND( origin.x + icon_sz.x + 7.f * s ), IM_ROUND( y + 4.f * s ) ),
-// SPOTIFY_DISABLED:             text.to_im_color( 0.85f ), tr( "Spotify" ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // Everything that is not a transport control lives behind the dots, so the face of the
-// SPOTIFY_DISABLED:         // player stays down to the cover, the bar and the five buttons.
-// SPOTIFY_DISABLED:         const ImVec2 dc( origin.x + w - 10.f * s, IM_ROUND( y + 8.f * s ) );
-// SPOTIFY_DISABLED:         const ImVec2 half( 11.f * s, 9.f * s );
-// SPOTIFY_DISABLED:         ImGui::SetCursorScreenPos( dc - half );
-// SPOTIFY_DISABLED:         opts_clicked = ImGui::InvisibleButton( "##sp_opts_btn", half * 2.f );
-// SPOTIFY_DISABLED:         const bool opts_up = ImGui::IsPopupOpen( ImGui::GetID( "##sp_opts" ), ImGuiPopupFlags_None );
-// SPOTIFY_DISABLED:         const float dt_ = cfg_anim( ImGui::GetID( "##sp_opts_btn" ), ImGui::IsItemHovered( ) || opts_up );
-// SPOTIFY_DISABLED:         if ( dt_ > 0.01f )
-// SPOTIFY_DISABLED:             draw->AddRectFilled( dc - half, dc + half, frame_inactive.to_im_color( 0.85f * dt_ ), 6.f * s );
-// SPOTIFY_DISABLED:         const ImU32 dots_col = cfg_mix( c_dim, c_text, ImMax( dt_, opts_up ? 1.f : 0.f ) );
-// SPOTIFY_DISABLED:         for ( int i = -1; i <= 1; ++i )
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( ImVec2( IM_ROUND( dc.x + i * 4.f * s ), IM_ROUND( dc.y ) ), 1.4f * s, dots_col, 12 );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED:     y += 24.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // Submitted before the offline branch returns, so the card survives Spotify closing under it.
-// SPOTIFY_DISABLED:     {
-// SPOTIFY_DISABLED:         bool wants = false;
-// SPOTIFY_DISABLED:         const float a = popup_animation( "##sp_opts", opts_clicked, wants );
-// SPOTIFY_DISABLED:         if ( begin_popup_card_at( "##sp_opts", wants, a,
-// SPOTIFY_DISABLED:                                   ImVec2( self->Pos.x + self->Size.x + 8.f * s, self->Pos.y ),
-// SPOTIFY_DISABLED:                                   ImVec2( 0.f, 0.f ), 272.f ) ) {
-// SPOTIFY_DISABLED:             ImGui::PushItemWidth( ImGui::GetContentRegionAvail( ).x );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             // A row that cannot do anything goes dark, and eases its colour back when it can -
-// SPOTIFY_DISABLED:             // rather than popping. Each gate is scoped to exactly the rows it governs.
-// SPOTIFY_DISABLED:             const auto gate_begin = [ & ]( const char* id, bool on ) {
-// SPOTIFY_DISABLED:                 const float lit = cfg_anim( ImGui::GetID( id ), on, 10.f );
-// SPOTIFY_DISABLED:                 ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImGui::GetStyle( ).Alpha * ImLerp( 0.38f, 1.f, lit ) );
-// SPOTIFY_DISABLED:                 ImGui::BeginDisabled( !on );
-// SPOTIFY_DISABLED:             };
-// SPOTIFY_DISABLED:             const auto gate_end = [ ]( ) {
-// SPOTIFY_DISABLED:                 ImGui::EndDisabled( );
-// SPOTIFY_DISABLED:                 ImGui::PopStyleVar( );
-// SPOTIFY_DISABLED:             };
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             static float muted_at = 0.70f;
-// SPOTIFY_DISABLED:             const bool was_muted = st.has_volume && st.volume <= 0.001f;
-// SPOTIFY_DISABLED:             bool muted = was_muted;
-// SPOTIFY_DISABLED:             gate_begin( "##sp_vol_lit", st.has_volume );
-// SPOTIFY_DISABLED:             if ( popup_toggle( ICON_FA_VOLUME_MUTE, "Mute", &muted ) && muted != was_muted ) {
-// SPOTIFY_DISABLED:                 if ( muted ) { muted_at = ImMax( st.volume, 0.05f ); spotify::set_volume( 0.f ); }
-// SPOTIFY_DISABLED:                 else         { spotify::set_volume( muted_at ); }
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             gate_end( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             popup_separator( );
-// SPOTIFY_DISABLED:             {
-// SPOTIFY_DISABLED:                 const bool was = spotify_lyrics;
-// SPOTIFY_DISABLED:                 popup_toggle( ICON_FA_MICROPHONE_ALT, "Show Lyrics", &spotify_lyrics );
-// SPOTIFY_DISABLED:                 if ( spotify_lyrics != was )
-// SPOTIFY_DISABLED:                     spotify::set_lyrics_enabled( spotify_lyrics );
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             {
-// SPOTIFY_DISABLED:                 static const char* const bg_modes[] = { "With Lyrics Background", "Without Lyrics Background" };
-// SPOTIFY_DISABLED:                 gate_begin( "##sp_bg_lit", spotify_lyrics );
-// SPOTIFY_DISABLED:                 popup_option( ICON_FA_IMAGE, "Background", bg_modes, IM_ARRAYSIZE( bg_modes ), &spotify_lyrics_bg );
-// SPOTIFY_DISABLED:                 gate_end( );
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             {
-// SPOTIFY_DISABLED:                 const bool was = spotify_gif;
-// SPOTIFY_DISABLED:                 popup_toggle( ICON_FA_FILM, "Preview GIF", &spotify_gif );
-// SPOTIFY_DISABLED:                 if ( spotify_gif != was )
-// SPOTIFY_DISABLED:                     gifbg::set_enabled( spotify_gif );
-// SPOTIFY_DISABLED:                 info_tooltip( "Preview GIF",
-// SPOTIFY_DISABLED:                     "Plays a GIF behind the player. Drop files in spotify_gif\\ next to the "
-// SPOTIFY_DISABLED:                     "executable, named \"<artist> - <title>.gif\", \"<title>.gif\" or \"default.gif\". "
-// SPOTIFY_DISABLED:                     "Without a matching file the cover art is used instead." );
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             popup_separator( );
-// SPOTIFY_DISABLED:             {
-// SPOTIFY_DISABLED:                 // Spotify's own channel in the Windows mixer - the media session API carries no
-// SPOTIFY_DISABLED:                 // volume of its own. Indented by the rows' icon column so the label starts on the
-// SPOTIFY_DISABLED:                 // same x as theirs, and the track ends on the same x as their switches.
-// SPOTIFY_DISABLED:                 const float row_w = popup_row_width( ); // what the rows above actually span
-// SPOTIFY_DISABLED:                 const float indent = 36.f * s;
-// SPOTIFY_DISABLED:                 gate_begin( "##sp_vols_lit", st.has_volume );
-// SPOTIFY_DISABLED:                 ImGui::SetCursorPosX( ImGui::GetCursorPosX( ) + indent );
-// SPOTIFY_DISABLED:                 ImGui::PushItemWidth( ImMax( 1.f, row_w - indent ) );
-// SPOTIFY_DISABLED:                 int vol = ( int )IM_ROUND( ( st.has_volume ? st.volume : 1.f ) * 100.f );
-// SPOTIFY_DISABLED:                 if ( ImGui::SliderInt( "Volume", &vol, 0, 100, "%d%%" ) )
-// SPOTIFY_DISABLED:                     spotify::set_volume( vol / 100.f );
-// SPOTIFY_DISABLED:                 ImGui::PopItemWidth( );
-// SPOTIFY_DISABLED:                 gate_end( );
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             ImGui::PopItemWidth( );
-// SPOTIFY_DISABLED:             end_popup_card( );
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // ---- nothing to drive: one clear call to action ------------------------------------------
-// SPOTIFY_DISABLED:     if ( !connected ) {
-// SPOTIFY_DISABLED:         const float panel_h = 118.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const char* head = st.status == spotify::status_t::not_running ? tr( "Spotify is not running" )
-// SPOTIFY_DISABLED:                          : st.status == spotify::status_t::idle        ? tr( "Nothing is playing" )
-// SPOTIFY_DISABLED:                                                                        : tr( "Media controls unavailable" );
-// SPOTIFY_DISABLED:         const char* sub  = st.status == spotify::status_t::not_running ? tr( "Start it and this connects on its own." )
-// SPOTIFY_DISABLED:                          : st.status == spotify::status_t::idle        ? tr( "Play something in Spotify to take over." )
-// SPOTIFY_DISABLED:                                                                        : tr( "This build of Windows exposes no media session." );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // a slow accent breath behind the glyph, so the empty state is not a dead rectangle
-// SPOTIFY_DISABLED:         const float breath = 0.5f + 0.5f * sinf( sp_ui.beat * 1.4f );
-// SPOTIFY_DISABLED:         const ImVec2 gc( origin.x + w * 0.5f, y + 24.f * s );
-// SPOTIFY_DISABLED:         for ( int i = 3; i >= 1; --i )
-// SPOTIFY_DISABLED:             draw->AddCircle( gc, ( 13.f + i * 5.f + breath * 2.f ) * s,
-// SPOTIFY_DISABLED:                 accent_color.to_im_color( 0.13f / i ), 40, 1.5f * s );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const float gfs = body->FontSize; // baked size, not 1.5x of a 13px face
-// SPOTIFY_DISABLED:         const ImVec2 gsz = body->CalcTextSizeA( gfs, FLT_MAX, 0.f, ICON_FA_MUSIC );
-// SPOTIFY_DISABLED:         draw->AddText( body, gfs, ImVec2( IM_ROUND( gc.x - gsz.x * 0.5f ),
-// SPOTIFY_DISABLED:                                           IM_ROUND( gc.y - TextInkCenterY( body, gfs, ICON_FA_MUSIC ) ) ),
-// SPOTIFY_DISABLED:             accent_color.to_im_color( 0.85f ), ICON_FA_MUSIC );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const ImVec2 hsz = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, head );
-// SPOTIFY_DISABLED:         draw->AddText( bold, bold->FontSize, ImVec2( IM_ROUND( origin.x + ( w - hsz.x ) * 0.5f ),
-// SPOTIFY_DISABLED:                                                      IM_ROUND( y + 46.f * s ) ), text.to_im_color( ), head );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const ImVec2 ssz = micro->CalcTextSizeA( micro->FontSize, FLT_MAX, 0.f, sub );
-// SPOTIFY_DISABLED:         draw->AddText( micro, micro->FontSize, ImVec2( IM_ROUND( origin.x + ( w - ssz.x ) * 0.5f ),
-// SPOTIFY_DISABLED:                                                        IM_ROUND( y + 68.f * s ) ), text_disabled.to_im_color( ), sub );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( st.status != spotify::status_t::unsupported ) {
-// SPOTIFY_DISABLED:             const char* label = st.status == spotify::status_t::idle ? tr( "Open Spotify" ) : tr( "Open Spotify" );
-// SPOTIFY_DISABLED:             const float bh = 30.f * s;
-// SPOTIFY_DISABLED:             const float bw = ImMin( w, micro->CalcTextSizeA( micro->FontSize, FLT_MAX, 0.f, label ).x + 52.f * s );
-// SPOTIFY_DISABLED:             const ImVec2 bmin( IM_ROUND( origin.x + ( w - bw ) * 0.5f ), IM_ROUND( y + 88.f * s ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             ImGui::SetCursorScreenPos( bmin );
-// SPOTIFY_DISABLED:             const bool pressed = ImGui::InvisibleButton( "##sp_open", ImVec2( bw, bh ) );
-// SPOTIFY_DISABLED:             const float t = cfg_anim( ImGui::GetID( "##sp_open" ), ImGui::IsItemHovered( ) );
-// SPOTIFY_DISABLED:             const float press = ImGui::IsItemActive( ) ? 1.f : 0.f;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             const ImVec2 grow( 2.f * s * t - 1.f * s * press, 1.f * s * t - 0.5f * s * press );
-// SPOTIFY_DISABLED:             draw->AddRectFilled( bmin - grow, bmin + ImVec2( bw, bh ) + grow,
-// SPOTIFY_DISABLED:                 accent_color.to_im_color( 0.85f + 0.15f * t ), ( bh * 0.5f ) );
-// SPOTIFY_DISABLED:             if ( t > 0.01f )
-// SPOTIFY_DISABLED:                 draw->AddRect( bmin - grow - ImVec2( 3.f, 3.f ) * s, bmin + ImVec2( bw, bh ) + grow + ImVec2( 3.f, 3.f ) * s,
-// SPOTIFY_DISABLED:                     accent_color.to_im_color( 0.30f * t ), bh * 0.5f + 3.f * s, 0, 1.5f * s );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             const ImVec2 lsz = micro->CalcTextSizeA( micro->FontSize, FLT_MAX, 0.f, label );
-// SPOTIFY_DISABLED:             const ImVec2 isz = body->CalcTextSizeA( body->FontSize, FLT_MAX, 0.f, ICON_FA_EXTERNAL_LINK_ALT );
-// SPOTIFY_DISABLED:             const float block = isz.x + 7.f * s + lsz.x;
-// SPOTIFY_DISABLED:             const float bx = bmin.x + ( bw - block ) * 0.5f;
-// SPOTIFY_DISABLED:             const float by = bmin.y + bh * 0.5f;
-// SPOTIFY_DISABLED:             draw->AddText( body, body->FontSize, ImVec2( IM_ROUND( bx ),
-// SPOTIFY_DISABLED:                 IM_ROUND( by - TextInkCenterY( body, body->FontSize, ICON_FA_EXTERNAL_LINK_ALT ) ) ),
-// SPOTIFY_DISABLED:                 IM_COL32( 255, 255, 255, ( int )( 255.f * ca ) ), ICON_FA_EXTERNAL_LINK_ALT );
-// SPOTIFY_DISABLED:             draw->AddText( micro, micro->FontSize, ImVec2( IM_ROUND( bx + isz.x + 7.f * s ),
-// SPOTIFY_DISABLED:                 IM_ROUND( by - TextLineCenterY( micro, micro->FontSize ) ) ),
-// SPOTIFY_DISABLED:                 IM_COL32( 255, 255, 255, ( int )( 255.f * ca ) ), label );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             if ( pressed )
-// SPOTIFY_DISABLED:                 spotify::launch( );
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         ImGui::SetCursorScreenPos( ImVec2( origin.x, y + panel_h ) );
-// SPOTIFY_DISABLED:         ImGui::End( );
-// SPOTIFY_DISABLED:         ImGui::PopStyleColor( );
-// SPOTIFY_DISABLED:         ImGui::PopStyleVar( 4 );
-// SPOTIFY_DISABLED:         return;
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // ---- connected ---------------------------------------------------------------------------
-// SPOTIFY_DISABLED:     const float art_sz = 64.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     ImU32 pal_a = 0, pal_b = 0;
-// SPOTIFY_DISABLED:     int   motif = 0;
-// SPOTIFY_DISABLED:     sp_palette( st.title + st.album, pal_a, pal_b, motif );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // ---- cover + track ---------------------------------------------------------------------
-// SPOTIFY_DISABLED:     {
-// SPOTIFY_DISABLED:         const ImVec2 art_min( origin.x, y );
-// SPOTIFY_DISABLED:         const ImVec2 art_max = art_min + ImVec2( art_sz, art_sz );
-// SPOTIFY_DISABLED:         const float  art_round = 10.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // The glow behind the sleeve is the only thing that moves on its own while a track plays -
-// SPOTIFY_DISABLED:         // it is what makes a paused player read as paused at a glance.
-// SPOTIFY_DISABLED:         const float glow = ( 0.35f + 0.65f * ( 0.5f + 0.5f * sinf( sp_ui.beat * 2.2f ) ) ) * sp_ui.play_t;
-// SPOTIFY_DISABLED:         for ( int i = 3; i >= 1; --i )
-// SPOTIFY_DISABLED:             draw->AddRect( art_min - ImVec2( i * 2.f, i * 2.f ) * s, art_max + ImVec2( i * 2.f, i * 2.f ) * s,
-// SPOTIFY_DISABLED:                 accent_color.to_im_color( 0.10f * glow / i ), art_round + i * 2.f * s, 0, 2.f * s );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // the hashed sleeve underneath, the real cover fading in over it on every track change
-// SPOTIFY_DISABLED:         sp_draw_cover( draw, pal_a, pal_b, motif, art_min, art_max, art_round, ca, sp_ui.beat * 0.11f );
-// SPOTIFY_DISABLED:         if ( void* art = spotify::art_view( ) )
-// SPOTIFY_DISABLED:             draw->AddImageRounded( ( ImTextureID )art, art_min, art_max, ImVec2( 0.f, 0.f ), ImVec2( 1.f, 1.f ),
-// SPOTIFY_DISABLED:                 IM_COL32( 255, 255, 255, ( int )( 255.f * ca * ease ) ), art_round );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // ---- title / artist / album ----
-// SPOTIFY_DISABLED:         const float tx = origin.x + art_sz + 14.f * s;
-// SPOTIFY_DISABLED:         const float link_w = 22.f * s;
-// SPOTIFY_DISABLED:         const float tw = origin.x + w - tx - link_w;
-// SPOTIFY_DISABLED:         const float slide = ( 1.f - ease ) * 10.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const char* title  = st.title.empty( )  ? tr( "Unknown track" ) : st.title.c_str( );
-// SPOTIFY_DISABLED:         const char* artist = st.artist.empty( ) ? tr( "Unknown artist" ) : st.artist.c_str( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         draw->PushClipRect( ImVec2( tx, y ), ImVec2( tx + tw, y + art_sz ), true );
-// SPOTIFY_DISABLED:         {
-// SPOTIFY_DISABLED:             // Marquee with a hold at each end, so a long title is readable instead of always moving.
-// SPOTIFY_DISABLED:             const float fs = bold->FontSize;
-// SPOTIFY_DISABLED:             const ImVec2 sz = bold->CalcTextSizeA( fs, FLT_MAX, 0.f, title );
-// SPOTIFY_DISABLED:             float x = tx;
-// SPOTIFY_DISABLED:             if ( sz.x > tw ) {
-// SPOTIFY_DISABLED:                 const float u = ImFmod( ( float )ImGui::GetTime( ) * 0.16f, 1.f );
-// SPOTIFY_DISABLED:                 float k = ImSaturate( ( u - 0.15f ) / 0.32f ) - ImSaturate( ( u - 0.66f ) / 0.32f );
-// SPOTIFY_DISABLED:                 k = k * k * ( 3.f - 2.f * k );
-// SPOTIFY_DISABLED:                 x -= ( sz.x - tw ) * k;
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             draw->AddText( bold, fs, ImVec2( IM_ROUND( x ), IM_ROUND( y + 4.f * s + slide ) ),
-// SPOTIFY_DISABLED:                 text.to_im_color( ease ), title );
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED:         draw->AddText( small, small->FontSize, ImVec2( IM_ROUND( tx ), IM_ROUND( y + 26.f * s + slide * 1.4f ) ),
-// SPOTIFY_DISABLED:             cfg_mix( c_dim, c_text, 0.55f * ease ), artist );
-// SPOTIFY_DISABLED:         if ( !st.album.empty( ) )
-// SPOTIFY_DISABLED:             draw->AddText( micro, micro->FontSize, ImVec2( IM_ROUND( tx ), IM_ROUND( y + 44.f * s + slide * 1.8f ) ),
-// SPOTIFY_DISABLED:                 text_disabled.to_im_color( 0.75f * ease ), st.album.c_str( ) );
-// SPOTIFY_DISABLED:         draw->PopClipRect( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( icon_button( "##sp_focus", ImVec2( origin.x + w - 10.f * s, y + 12.f * s ), 24.f * s,
-// SPOTIFY_DISABLED:                           ICON_FA_EXTERNAL_LINK_ALT, body, body->FontSize, 0.f, 0.10f, true ) )
-// SPOTIFY_DISABLED:             spotify::launch( ); // already running, so this brings its window forward
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED:     y += art_sz + 14.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // ---- progress ----------------------------------------------------------------------------
-// SPOTIFY_DISABLED:     {
-// SPOTIFY_DISABLED:         const float bar_h = 4.f * s;
-// SPOTIFY_DISABLED:         const ImVec2 bar_min( origin.x, IM_ROUND( y + 4.f * s ) );
-// SPOTIFY_DISABLED:         const float  bar_w = w;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         ImGui::SetCursorScreenPos( ImVec2( bar_min.x, bar_min.y - 9.f * s ) );
-// SPOTIFY_DISABLED:         ImGui::InvisibleButton( "##sp_seek", ImVec2( bar_w, bar_h + 18.f * s ) );
-// SPOTIFY_DISABLED:         const bool bar_hot = st.can_seek && ( ImGui::IsItemHovered( ) || ImGui::IsItemActive( ) );
-// SPOTIFY_DISABLED:         const bool active  = st.can_seek && ImGui::IsItemActive( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // Committed on release, not per frame: a seek is an IPC round trip to Spotify and firing
-// SPOTIFY_DISABLED:         // one every frame of a drag makes the app stutter. spotify::seek() carries the local
-// SPOTIFY_DISABLED:         // position with it, so the bar stays where it was dropped instead of snapping back for the
-// SPOTIFY_DISABLED:         // poll or two it takes the app to report the new one.
-// SPOTIFY_DISABLED:         static float drag_t = 0.f;
-// SPOTIFY_DISABLED:         if ( active && bar_w > 0.f )
-// SPOTIFY_DISABLED:             drag_t = ImSaturate( ( io.MousePos.x - bar_min.x ) / bar_w );
-// SPOTIFY_DISABLED:         if ( sp_ui.seeking && !active && st.duration > 0.0 )
-// SPOTIFY_DISABLED:             spotify::seek( drag_t * st.duration );
-// SPOTIFY_DISABLED:         sp_ui.seeking = active;
-// SPOTIFY_DISABLED:         if ( active )
-// SPOTIFY_DISABLED:             sp_ui.fill_t = drag_t;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const float hot = cfg_anim( ImGui::GetID( "##sp_seek" ), bar_hot );
-// SPOTIFY_DISABLED:         const float grow = bar_h * ( 1.f + 0.55f * hot );
-// SPOTIFY_DISABLED:         const ImVec2 bmin( bar_min.x, IM_ROUND( bar_min.y - ( grow - bar_h ) * 0.5f ) );
-// SPOTIFY_DISABLED:         const ImVec2 bmax( bar_min.x + bar_w, bmin.y + grow );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         draw->AddRectFilled( bmin, bmax, frame_inactive.to_im_color( 0.9f ), grow * 0.5f );
-// SPOTIFY_DISABLED:         const float fx = bmin.x + bar_w * sp_ui.fill_t;
-// SPOTIFY_DISABLED:         if ( fx > bmin.x + 0.5f ) {
-// SPOTIFY_DISABLED:             draw->AddRectFilled( bmin, ImVec2( fx, bmax.y ), accent_color.to_im_color( ), grow * 0.5f );
-// SPOTIFY_DISABLED:             const float sweep = ImFmod( sp_ui.beat * 0.35f, 1.f ) * ( fx - bmin.x );
-// SPOTIFY_DISABLED:             draw->PushClipRect( bmin, ImVec2( fx, bmax.y ), true );
-// SPOTIFY_DISABLED:             draw->AddRectFilled( ImVec2( bmin.x + sweep - 18.f * s, bmin.y ), ImVec2( bmin.x + sweep + 18.f * s, bmax.y ),
-// SPOTIFY_DISABLED:                 IM_COL32( 255, 255, 255, ( int )( 34.f * ca * sp_ui.play_t ) ), grow * 0.5f );
-// SPOTIFY_DISABLED:             draw->PopClipRect( );
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED:         if ( hot > 0.01f )
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( ImVec2( fx, ( bmin.y + bmax.y ) * 0.5f ), 5.f * s * hot, text.to_im_color( ), 24 );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         char a[ 16 ], b[ 16 ];
-// SPOTIFY_DISABLED:         sp_format_time( a, IM_ARRAYSIZE( a ), active ? drag_t * st.duration : st.position );
-// SPOTIFY_DISABLED:         sp_format_time( b, IM_ARRAYSIZE( b ), st.duration );
-// SPOTIFY_DISABLED:         const float fs = micro->FontSize;
-// SPOTIFY_DISABLED:         const ImVec2 bsz = micro->CalcTextSizeA( fs, FLT_MAX, 0.f, b );
-// SPOTIFY_DISABLED:         const float ty = IM_ROUND( bmax.y + 7.f * s );
-// SPOTIFY_DISABLED:         draw->AddText( micro, fs, ImVec2( IM_ROUND( origin.x ), ty ), text_disabled.to_im_color( ), a );
-// SPOTIFY_DISABLED:         draw->AddText( micro, fs, ImVec2( IM_ROUND( origin.x + w - bsz.x ), ty ), text_disabled.to_im_color( ), b );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED:     y += 30.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // ---- transport ---------------------------------------------------------------------------
-// SPOTIFY_DISABLED:     {
-// SPOTIFY_DISABLED:         const float cy = y + 20.f * s;
-// SPOTIFY_DISABLED:         const float cx = origin.x + w * 0.5f;
-// SPOTIFY_DISABLED:         const float gap = 36.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( icon_button( "##sp_shuffle", ImVec2( cx - gap * 2.f, cy ), 24.f * s, ICON_FA_RANDOM,
-// SPOTIFY_DISABLED:                           body, body->FontSize, st.shuffle ? 1.f : 0.f, 0.12f, st.can_shuffle ) )
-// SPOTIFY_DISABLED:             spotify::set_shuffle( !st.shuffle );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( icon_button( "##sp_prev", ImVec2( cx - gap, cy ), 27.f * s, ICON_FA_STEP_BACKWARD,
-// SPOTIFY_DISABLED:                           body, body->FontSize, 0.f, 0.12f, st.can_previous ) )
-// SPOTIFY_DISABLED:             spotify::previous( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         // play / pause: the accent disc, with the two glyphs cross-fading through play_t
-// SPOTIFY_DISABLED:         {
-// SPOTIFY_DISABLED:             const float r = 18.f * s;
-// SPOTIFY_DISABLED:             ImGui::SetCursorScreenPos( ImVec2( cx - r, cy - r ) );
-// SPOTIFY_DISABLED:             const bool pressed = ImGui::InvisibleButton( "##sp_play", ImVec2( r * 2.f, r * 2.f ) );
-// SPOTIFY_DISABLED:             const bool hovered = ImGui::IsItemHovered( );
-// SPOTIFY_DISABLED:             const bool held = ImGui::IsItemActive( );
-// SPOTIFY_DISABLED:             const float t = cfg_anim( ImGui::GetID( "##sp_play" ), hovered );
-// SPOTIFY_DISABLED:             const float k = 1.f + 0.07f * t - ( held ? 0.06f : 0.f );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( ImVec2( cx, cy ), r * k * 1.28f, accent_color.to_im_color( 0.16f * t ), 40 );
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( ImVec2( cx, cy ), r * k, accent_color.to_im_color( ), 48 );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             const float fs = body->FontSize; // the disc scales on hover, the glyph never does
-// SPOTIFY_DISABLED:             const auto glyph = [ & ]( const char* g, float a, float dx ) {
-// SPOTIFY_DISABLED:                 if ( a <= 0.01f ) return;
-// SPOTIFY_DISABLED:                 const ImVec2 sz = body->CalcTextSizeA( fs, FLT_MAX, 0.f, g );
-// SPOTIFY_DISABLED:                 draw->AddText( body, fs, ImVec2( IM_ROUND( cx - sz.x * 0.5f + dx ),
-// SPOTIFY_DISABLED:                                                  IM_ROUND( cy - TextInkCenterY( body, fs, g ) ) ),
-// SPOTIFY_DISABLED:                     IM_COL32( 255, 255, 255, ( int )( 255.f * a * ca ) ), g );
-// SPOTIFY_DISABLED:             };
-// SPOTIFY_DISABLED:             glyph( ICON_FA_PLAY,  1.f - sp_ui.play_t, 1.f * s ); // the triangle's ink sits left of centre
-// SPOTIFY_DISABLED:             glyph( ICON_FA_PAUSE, sp_ui.play_t,       0.f );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             if ( pressed && st.can_play_pause )
-// SPOTIFY_DISABLED:                 spotify::toggle_play( );
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( icon_button( "##sp_next", ImVec2( cx + gap, cy ), 27.f * s, ICON_FA_STEP_FORWARD,
-// SPOTIFY_DISABLED:                           body, body->FontSize, 0.f, 0.12f, st.can_next ) )
-// SPOTIFY_DISABLED:             spotify::next( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( icon_button( "##sp_repeat", ImVec2( cx + gap * 2.f, cy ), 24.f * s,
-// SPOTIFY_DISABLED:                           st.repeat == spotify::repeat_t::one ? ICON_FA_REDO_ALT : ICON_FA_REDO,
-// SPOTIFY_DISABLED:                           body, body->FontSize, st.repeat != spotify::repeat_t::off ? 1.f : 0.f,
-// SPOTIFY_DISABLED:                           0.12f, st.can_repeat ) )
-// SPOTIFY_DISABLED:             spotify::cycle_repeat( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         if ( st.repeat == spotify::repeat_t::one )
-// SPOTIFY_DISABLED:             draw->AddCircleFilled( ImVec2( cx + gap * 2.f, cy + 10.f * s ), 1.6f * s, accent_color.to_im_color( ), 12 );
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED:     y += 44.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     // ---- lyrics -------------------------------------------------------------------------------
-// SPOTIFY_DISABLED:     {
-// SPOTIFY_DISABLED:         const spotify::lyrics_t& ly = spotify::lyrics( );
-// SPOTIFY_DISABLED:         const bool want = spotify_lyrics && ly.state != spotify::lyrics_state_t::off;
-// SPOTIFY_DISABLED:         sp_ui.lyrics_t = ImLerp( sp_ui.lyrics_t, want ? 1.f : 0.f,
-// SPOTIFY_DISABLED:                                  1.f - expf( -ImClamp( io.DeltaTime, 0.f, 0.1f ) * 10.f ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:         const float panel_h = lyrics_h;
-// SPOTIFY_DISABLED:         if ( panel_h > 1.f ) {
-// SPOTIFY_DISABLED:             const ImVec2 pmin( origin.x, IM_ROUND( origin.y + lyrics_top ) );
-// SPOTIFY_DISABLED:             const ImVec2 pmax( origin.x + w, pmin.y + panel_h );
-// SPOTIFY_DISABLED:             const float  pr = 12.f * s;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             // "With Lyrics Background": the sleeve itself, blown up well past its own resolution
-// SPOTIFY_DISABLED:             // and scrimmed. The magnification is the blur - there is no second pass to pay for.
-// SPOTIFY_DISABLED:             draw->AddRectFilled( pmin, pmax, frame_inactive.to_im_color( 0.55f ), pr );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             // The whole card is already wearing the backdrop, which runs behind this panel too, so
-// SPOTIFY_DISABLED:             // the panel gives up its own copy as that fades in - a second crop of the same image
-// SPOTIFY_DISABLED:             // inside the first is what turns a wash into noise - and pays for the loss with a
-// SPOTIFY_DISABLED:             // deeper scrim, which is all the lyrics needed from it.
-// SPOTIFY_DISABLED:             const float own_bg = 1.f - ImClamp( bg_t, 0.f, 1.f );
-// SPOTIFY_DISABLED:             if ( spotify_lyrics_bg == 0 && own_bg > 0.004f ) {
-// SPOTIFY_DISABLED:                 if ( void* art = spotify::art_view( ) ) {
-// SPOTIFY_DISABLED:                     draw->PushClipRect( pmin, pmax, true );
-// SPOTIFY_DISABLED:                     // Cover-crop: the sleeve is square and the panel is wide, so it keeps the full
-// SPOTIFY_DISABLED:                     // width and gives up the top and bottom of the image.
-// SPOTIFY_DISABLED:                     const float uvh = ImMin( 1.f, panel_h / ImMax( pmax.x - pmin.x, 1.f ) );
-// SPOTIFY_DISABLED:                     const ImVec2 uv0( 0.f, 0.5f - uvh * 0.5f );
-// SPOTIFY_DISABLED:                     const ImVec2 uv1( 1.f, 0.5f + uvh * 0.5f );
-// SPOTIFY_DISABLED:                     draw->AddImageRounded( ( ImTextureID )art, pmin, pmax, uv0, uv1,
-// SPOTIFY_DISABLED:                         IM_COL32( 255, 255, 255, ( int )( 125.f * ca * own_bg ) ), pr );
-// SPOTIFY_DISABLED:                     draw->AddRectFilled( pmin, pmax, IM_COL32( 6, 8, 14, ( int )( 200.f * ca * own_bg ) ), pr );
-// SPOTIFY_DISABLED:                     draw->PopClipRect( );
-// SPOTIFY_DISABLED:                 }
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             if ( bg_t > 0.004f )
-// SPOTIFY_DISABLED:                 draw->AddRectFilled( pmin, pmax, IM_COL32( 6, 8, 14, ( int )( 96.f * ca * bg_t ) ), pr );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             ImFont* big = atlas->Fonts.Size > 8 ? atlas->Fonts[ 8 ] : bold;
-// SPOTIFY_DISABLED:             ImFont* lil = atlas->Fonts.Size > 9 ? atlas->Fonts[ 9 ] : small;
-// SPOTIFY_DISABLED:             const float inset = 14.f * s;
-// SPOTIFY_DISABLED:             const float wrap = w - inset * 2.f;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             draw->PushClipRect( pmin, pmax, true );
-// SPOTIFY_DISABLED:             if ( ly.state != spotify::lyrics_state_t::ready || ly.lines.empty( ) ) {
-// SPOTIFY_DISABLED:                 const char* note = ly.state == spotify::lyrics_state_t::loading ? tr( "Loading lyrics" )
-// SPOTIFY_DISABLED:                                                                                : tr( "No lyrics for this track" );
-// SPOTIFY_DISABLED:                 const ImVec2 nsz = lil->CalcTextSizeA( lil->FontSize, FLT_MAX, 0.f, note );
-// SPOTIFY_DISABLED:                 draw->AddText( lil, lil->FontSize,
-// SPOTIFY_DISABLED:                     ImVec2( IM_ROUND( pmin.x + ( w - nsz.x ) * 0.5f ),
-// SPOTIFY_DISABLED:                             IM_ROUND( ( pmin.y + pmax.y ) * 0.5f - lil->FontSize * 0.5f ) ),
-// SPOTIFY_DISABLED:                     text_disabled.to_im_color( ), note );
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             else {
-// SPOTIFY_DISABLED:                 const int active = ly.synced ? spotify::lyrics_index( st.position ) : -1;
-// SPOTIFY_DISABLED:                 if ( active != sp_ui.lyrics_line ) {
-// SPOTIFY_DISABLED:                     sp_ui.lyrics_line = active;
-// SPOTIFY_DISABLED:                     sp_ui.lyrics_line_t = 0.f;
-// SPOTIFY_DISABLED:                 }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                 // One pass to lay the block out, a second to draw the part of it that is on screen.
-// SPOTIFY_DISABLED:                 const int count = ( int )ly.lines.size( );
-// SPOTIFY_DISABLED:                 float cursor = 0.f, active_y = 0.f, active_h = 0.f, total_lines_h = 0.f;
-// SPOTIFY_DISABLED:                 for ( int i = 0; i < count; ++i ) {
-// SPOTIFY_DISABLED:                     ImFont* f = ( i == active ) ? big : lil;
-// SPOTIFY_DISABLED:                     const float lh = ly.lines[ i ].text.empty( )
-// SPOTIFY_DISABLED:                         ? f->FontSize * 0.55f
-// SPOTIFY_DISABLED:                         : f->CalcTextSizeA( f->FontSize, FLT_MAX, wrap, ly.lines[ i ].text.c_str( ) ).y;
-// SPOTIFY_DISABLED:                     if ( i == active ) { active_y = cursor; active_h = lh; }
-// SPOTIFY_DISABLED:                     cursor += lh + 10.f * s;
-// SPOTIFY_DISABLED:                 }
-// SPOTIFY_DISABLED:                 total_lines_h = cursor;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                 float target = 0.f;
-// SPOTIFY_DISABLED:                 if ( active >= 0 ) {
-// SPOTIFY_DISABLED:                     target = active_y + active_h * 0.5f - panel_h * 0.42f;
-// SPOTIFY_DISABLED:                 }
-// SPOTIFY_DISABLED:                 else if ( !ly.synced && st.duration > 0.0 ) {
-// SPOTIFY_DISABLED:                     // Nothing to sync to, so it drifts with the track instead of sitting still.
-// SPOTIFY_DISABLED:                     target = ( float )( st.position / st.duration ) * ImMax( 0.f, total_lines_h - panel_h * 0.6f );
-// SPOTIFY_DISABLED:                 }
-// SPOTIFY_DISABLED:                 target = ImClamp( target, -panel_h * 0.25f, ImMax( 0.f, total_lines_h - panel_h * 0.5f ) );
-// SPOTIFY_DISABLED:                 sp_ui.lyrics_scroll = ImLerp( sp_ui.lyrics_scroll, target,
-// SPOTIFY_DISABLED:                                               1.f - expf( -ImClamp( io.DeltaTime, 0.f, 0.1f ) * 9.f ) );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                 cursor = 0.f;
-// SPOTIFY_DISABLED:                 for ( int i = 0; i < count; ++i ) {
-// SPOTIFY_DISABLED:                     ImFont* f = ( i == active ) ? big : lil;
-// SPOTIFY_DISABLED:                     const char* txt = ly.lines[ i ].text.c_str( );
-// SPOTIFY_DISABLED:                     const float lh = ly.lines[ i ].text.empty( )
-// SPOTIFY_DISABLED:                         ? f->FontSize * 0.55f
-// SPOTIFY_DISABLED:                         : f->CalcTextSizeA( f->FontSize, FLT_MAX, wrap, txt ).y;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                     const float ly_top = pmin.y + 10.f * s + cursor - sp_ui.lyrics_scroll;
-// SPOTIFY_DISABLED:                     cursor += lh + 10.f * s;
-// SPOTIFY_DISABLED:                     if ( ly_top > pmax.y || ly_top + lh < pmin.y || ly.lines[ i ].text.empty( ) )
-// SPOTIFY_DISABLED:                         continue;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                     // Read: bright on the line being sung, falling away above and below it, and
-// SPOTIFY_DISABLED:                     // fading again at the panel's own edges so nothing is cut mid-glyph.
-// SPOTIFY_DISABLED:                     float a;
-// SPOTIFY_DISABLED:                     if ( i == active ) {
-// SPOTIFY_DISABLED:                         a = 1.f;
-// SPOTIFY_DISABLED:                     }
-// SPOTIFY_DISABLED:                     else if ( active < 0 ) {
-// SPOTIFY_DISABLED:                         a = 0.62f;
-// SPOTIFY_DISABLED:                     }
-// SPOTIFY_DISABLED:                     else {
-// SPOTIFY_DISABLED:                         const int d = i - active;
-// SPOTIFY_DISABLED:                         a = d < 0 ? 0.26f : ImMax( 0.30f, 0.62f - 0.10f * ( d - 1 ) );
-// SPOTIFY_DISABLED:                     }
-// SPOTIFY_DISABLED:                     const float mid = ly_top + lh * 0.5f;
-// SPOTIFY_DISABLED:                     a *= ImSaturate( ( mid - pmin.y ) / ( 26.f * s ) ) * ImSaturate( ( pmax.y - mid ) / ( 26.f * s ) );
-// SPOTIFY_DISABLED:                     if ( a <= 0.01f )
-// SPOTIFY_DISABLED:                         continue;
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                     const ImU32 col = ( i == active ) ? accent_color.to_im_color( a )
-// SPOTIFY_DISABLED:                                                       : text.to_im_color( a * 0.9f );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:                     const float slide = ( i == active ) ? ( 1.f - sp_ui.lyrics_line_t ) * 5.f * s : 0.f;
-// SPOTIFY_DISABLED:                     draw->AddText( f, f->FontSize, ImVec2( IM_ROUND( pmin.x + inset ), IM_ROUND( ly_top + slide ) ),
-// SPOTIFY_DISABLED:                         col, txt, nullptr, wrap );
-// SPOTIFY_DISABLED:                 }
-// SPOTIFY_DISABLED:             }
-// SPOTIFY_DISABLED:             draw->PopClipRect( );
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:             y += panel_h + 6.f * s;
-// SPOTIFY_DISABLED:         }
-// SPOTIFY_DISABLED:     }
-// SPOTIFY_DISABLED: 
-// SPOTIFY_DISABLED:     ImGui::SetCursorScreenPos( ImVec2( origin.x, origin.y + total_h ) );
-// SPOTIFY_DISABLED:     ImGui::End( );
-// SPOTIFY_DISABLED:     ImGui::PopStyleColor( );
-// SPOTIFY_DISABLED:     ImGui::PopStyleVar( 4 );
-// SPOTIFY_DISABLED: }
-// SPOTIFY_DISABLED: 
+void c_gui::spotify_widget_draw( ) {
+    const float s = m_scale;
+    ImGuiIO& io = ImGui::GetIO( );
+
+    // Toggled, not opened: once the switch in the profile card is on, the widget stays where the
+    // user parked it until they turn it off - clicking elsewhere must not dismiss it, which is
+    // exactly what a popup would have done.
+    static float shown = 0.f;
+    static float bg_t = 0.f, bg_drift = 0.f; // the card backdrop's fade and its drift clock
+    shown = ImLerp( shown, spotify_widget ? 1.f : 0.f, 1.f - expf( -ImClamp( io.DeltaTime, 0.f, 0.1f ) * 12.f ) );
+    if ( !spotify_widget && shown <= 0.004f )
+        return;
+
+    // The panel wants room for 22px type, so the whole card eases wider while it is open rather
+    // than wrapping every line in half.
+    const float content_w = ImLerp( 268.f, 340.f, sp_ui.lyrics_t ) * s;
+    const float pad = 11.f * s;
+
+    // header 24 + sleeve 78 + progress 30 + transport 44 = 176 of advance, and the buttons' ink
+    // stops 6 short of that at 170. 173 leaves the same air under them as the padding leaves over
+    // the header. With lyrics the panel starts 6 below the ink and keeps 3 under itself.
+    const spotify::snapshot_t& st = spotify::state( );
+    const bool  connected  = st.status == spotify::status_t::connected;
+    const float lyrics_h   = connected ? IM_ROUND( 164.f * s * sp_ui.lyrics_t ) : 0.f;
+    const float lyrics_top = 176.f * s;
+    const float total_h    = !connected        ? 145.f * s
+                           : lyrics_h > 1.f    ? lyrics_top + lyrics_h + 3.f * s
+                                               : 173.f * s;
+
+    // Dragged the way the menu is dragged: the cursor sets a target and the window eases toward
+    // it, which is what gives the move its trailing weight instead of snapping to the pointer.
+    // ImGui still owns the grab itself - it already knows which press belongs to the window and
+    // which belongs to a button on it - and this only re-times the motion it asks for.
+    static bool   drag_ready = false;
+    static ImVec2 drag_pos, drag_target;
+    if ( drag_ready ) {
+        drag_pos = ImLerp( drag_pos, drag_target, 1.f - expf( -9.f * ImMin( io.DeltaTime, 0.05f ) ) );
+        if ( ImLengthSqr( drag_target - drag_pos ) < 0.25f )
+            drag_pos = drag_target;
+        ImGui::SetNextWindowPos( drag_pos, ImGuiCond_Always );
+    }
+
+    ImGui::SetNextWindowPos( ImVec2( io.DisplaySize.x - content_w - 90.f * s, 130.f * s ), ImGuiCond_FirstUseEver );
+    ImGui::SetNextWindowSize( ImVec2( content_w + pad * 2.f, total_h + pad * 2.f ), ImGuiCond_Always );
+
+    ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( pad, pad ) );
+    ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0.f );
+    ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 16.f * s );
+    ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImMax( shown, 0.02f ) );
+    ImGui::PushStyleColor( ImGuiCol_WindowBg, ImVec4( 0.f, 0.f, 0.f, 0.f ) );
+
+    // NoBackground is hijacked in imgui.cpp to mean "paint the menu chrome" for any non-popup
+    // window, so the background is cleared through the style colour instead and the surface is
+    // drawn by hand below. AlwaysAutoResize with a pinned width lets the two states (playing /
+    // Spotify closed) size themselves.
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoFocusOnAppearing;
+
+    const bool visible = ImGui::Begin( "##spotify_widget", nullptr, flags );
+    if ( !visible ) {
+        ImGui::End( );
+        ImGui::PopStyleColor( );
+        ImGui::PopStyleVar( 4 );
+        return;
+    }
+
+    ImGuiWindow* self = ImGui::GetCurrentWindow( );
+    ImDrawList* draw = self->DrawList;
+
+    if ( !drag_ready ) {
+        drag_pos = drag_target = self->Pos; // whatever the ini restored, or the first-use default
+        drag_ready = true;
+    }
+
+    // While ImGui is moving this window, take the position it wants as the target and let the ease
+    // above carry the window there. ActiveIdClickOffset is where inside the card the grab landed.
+    if ( GImGui->MovingWindow == self ) {
+        drag_target = io.MousePos - GImGui->ActiveIdClickOffset;
+        drag_target.x = ImClamp( drag_target.x, -self->Size.x + 60.f * s, io.DisplaySize.x - 60.f * s );
+        drag_target.y = ImClamp( drag_target.y, 0.f, io.DisplaySize.y - 32.f * s );
+    }
+
+    // Its own surface: heavier than the popup cards' 0.70, where the menu's own group box edges
+    // read straight through the blur as horizontal bands across the player. No border ring either,
+    // because a widget that lives on top of everything should not look like a dialog.
+    {
+        const ImVec2 wmin = self->Pos, wmax = self->Pos + self->Size;
+        const float radius = 16.f * s;
+        const float alpha = ImGui::GetStyle( ).Alpha;
+        popup_shadow( draw, wmin, wmax, radius, alpha );
+        draw->PushClipRect( wmin - ImVec2( 2.f, 2.f ) * s, wmax + ImVec2( 2.f, 2.f ) * s, false );
+        draw_blur_rounded( draw, wmin, wmax, alpha, radius,
+            ImColor( popup_bg.r, popup_bg.g, popup_bg.b, 0.80f ) );
+        shader_bg::draw_into( draw, wmin, wmax, radius, alpha );
+
+        // The backdrop: the track's GIF when one is sitting in spotify_gif\, and the cover itself
+        // when there is none, so the switch always answers with something that belongs to the song
+        // instead of nothing or a stray file. Scrimmed back either way so the type stays legible.
+        void* const  gif = gifbg::view( );
+        void* const  art = ( !gif && connected ) ? spotify::art_view( ) : nullptr;
+        const float  dts = ImClamp( io.DeltaTime, 0.f, 0.1f );
+        bg_t = ImLerp( bg_t, ( spotify_gif && ( gif || art ) ) ? 1.f : 0.f, 1.f - expf( -dts * 9.f ) );
+        bg_drift = ImFmod( bg_drift + dts, 1024.f );
+        if ( bg_t > 0.004f && ( gif || art ) ) {
+            // Cover-crop: keep the source's long axis and trim the short one, never letterbox.
+            const float cw = ImMax( wmax.x - wmin.x, 1.f ), chh = ImMax( wmax.y - wmin.y, 1.f );
+            const float aspect = cw / chh;
+            float uvw = 1.f, uvh = 1.f;
+            if ( aspect >= 1.f ) uvh = ImMin( 1.f, 1.f / aspect );
+            else                 uvw = ImMin( 1.f, aspect );
+
+            if ( gif ) {
+                draw->AddImageRounded( ( ImTextureID )gif, wmin, wmax,
+                    ImVec2( 0.5f - uvw * 0.5f, 0.5f - uvh * 0.5f ),
+                    ImVec2( 0.5f + uvw * 0.5f, 0.5f + uvh * 0.5f ),
+                    IM_COL32( 255, 255, 255, ( int )( 190.f * alpha * bg_t ) ), radius );
+            }
+            else {
+                // A sleeve blown straight up over the card would read as a thumbnail behind the
+                // type, so it is over-zoomed and smeared across seventeen uv taps - the bilinear
+                // upscale does half the work - then drifted so the wash breathes. A real gaussian
+                // pass would cost a second render target for something the scrim swallows anyway.
+                const float zoom = 1.58f + 0.06f * ImSin( bg_drift * 0.32f );
+                uvw /= zoom; uvh /= zoom;
+
+                // Two rings and a centre, the centre last so it carries the most weight: the taps
+                // composite rather than average, so each one's alpha is solved back out of the
+                // total the stack should reach.
+                static const ImVec2 taps[ ] = {
+                    ImVec2( -2.f, 0.f ), ImVec2( 2.f, 0.f ), ImVec2( 0.f, -2.f ), ImVec2( 0.f, 2.f ),
+                    ImVec2( -1.4f, -1.4f ), ImVec2( 1.4f, -1.4f ), ImVec2( -1.4f, 1.4f ), ImVec2( 1.4f, 1.4f ),
+                    ImVec2( -1.f, 0.f ), ImVec2( 1.f, 0.f ), ImVec2( 0.f, -1.f ), ImVec2( 0.f, 1.f ),
+                    ImVec2( -0.7f, -0.7f ), ImVec2( 0.7f, -0.7f ), ImVec2( -0.7f, 0.7f ), ImVec2( 0.7f, 0.7f ),
+                    ImVec2( 0.f, 0.f ) };
+                const float spread = 0.026f;
+
+                // The sampler wraps, so the drift has to stay inside the slack the zoom left, taps
+                // included - one uv past the edge and the far side of the sleeve folds into frame.
+                const float mx = ImMin( uvw * 0.5f + spread * 2.f, 0.5f );
+                const float my = ImMin( uvh * 0.5f + spread * 2.f, 0.5f );
+                const float cx = ImClamp( 0.5f + ( 0.5f - uvw * 0.5f ) * 0.55f * ImSin( bg_drift * 0.21f ), mx, 1.f - mx );
+                const float cy = ImClamp( 0.5f + ( 0.5f - uvh * 0.5f ) * 0.55f * ImCos( bg_drift * 0.17f ), my, 1.f - my );
+
+                const float total = ImClamp( 0.86f * alpha * bg_t, 0.f, 0.995f );
+                const int   ink   = ( int )( ( 1.f - ImPow( 1.f - total, 1.f / ( float )IM_ARRAYSIZE( taps ) ) ) * 255.f + 0.5f );
+                if ( ink > 0 ) {
+                    for ( const ImVec2& t : taps ) {
+                        const float ox = t.x * spread, oy = t.y * spread;
+                        draw->AddImageRounded( ( ImTextureID )art, wmin, wmax,
+                            ImVec2( cx - uvw * 0.5f + ox, cy - uvh * 0.5f + oy ),
+                            ImVec2( cx + uvw * 0.5f + ox, cy + uvh * 0.5f + oy ),
+                            IM_COL32( 255, 255, 255, ink ), radius );
+                    }
+                }
+            }
+            draw->AddRectFilled( wmin, wmax,
+                IM_COL32( 6, 8, 14, ( int )( ( gif ? 150.f : 172.f ) * alpha * bg_t ) ), radius );
+        }
+        draw->PopClipRect( );
+    }
+    ImFontAtlas* atlas = io.Fonts;
+    ImFont* bold  = atlas->Fonts[ 4 ]; // Inter-SemiBold 17
+    ImFont* micro = atlas->Fonts[ 6 ]; // Inter-SemiBold 12.5
+    ImFont* small = small_font( );     // Inter-Medium 13 + FA 13
+    ImFont* body  = atlas->Fonts[ 0 ]; // Inter-Medium 15 + FA 14 - every icon on this card
+
+    const float ca = ImGui::GetStyle( ).Alpha;
+    const float w = content_w;
+    const ImVec2 origin = ImGui::GetCursorScreenPos( );
+
+    const ImVec4 c_text = text.to_vec4( 1.f, false );
+    const ImVec4 c_dim  = text_disabled.to_vec4( 1.f, false );
+    const ImVec4 c_acc  = accent_color.to_vec4( 1.f, false );
+
+    const float ease = sp_ui.change_t * sp_ui.change_t * ( 3.f - 2.f * sp_ui.change_t );
+
+    // A local button: an invisible hit box, an animated plate, and a glyph centred on its own ink.
+    const auto icon_button = [ & ]( const char* id, ImVec2 centre, float box, const char* glyph,
+                                    ImFont* font, float fs, float lit, float scale_hot, bool enabled ) -> bool {
+        const ImVec2 half( box * 0.5f, box * 0.5f );
+        ImGui::SetCursorScreenPos( centre - half );
+        const bool pressed = ImGui::InvisibleButton( id, ImVec2( box, box ) ) && enabled;
+        const bool hovered = enabled && ImGui::IsItemHovered( );
+        const bool held    = enabled && ImGui::IsItemActive( );
+        const float t = cfg_anim( ImGui::GetID( id ), hovered );
+        const float k = 1.f + scale_hot * t - ( held ? 0.08f : 0.f );
+
+        if ( t > 0.01f )
+            draw->AddCircleFilled( centre, box * 0.5f * k, frame_inactive.to_im_color( 0.55f * t ), 28 );
+
+        const ImVec2 sz = font->CalcTextSizeA( fs, FLT_MAX, 0.f, glyph );
+        ImU32 col = cfg_mix( c_dim, lit > 0.5f ? c_acc : c_text, ImMax( t, lit ) );
+        if ( !enabled )
+            col = text_disabled.to_im_color( 0.45f );
+        draw->AddText( font, fs, ImVec2( IM_ROUND( centre.x - sz.x * 0.5f ),
+                                         IM_ROUND( centre.y - TextInkCenterY( font, fs, glyph ) ) ), col, glyph );
+        return pressed;
+    };
+
+    bool opts_clicked = false;
+    float y = origin.y;
+
+    // ---- header -------------------------------------------------------------------------------
+    {
+        const float fs = micro->FontSize;
+        const ImVec2 icon_sz = body->CalcTextSizeA( body->FontSize, FLT_MAX, 0.f, ICON_FA_MUSIC );
+        draw->AddText( body, body->FontSize, ImVec2( IM_ROUND( origin.x ), IM_ROUND( y + 2.f * s ) ),
+            accent_color.to_im_color( ), ICON_FA_MUSIC );
+        draw->AddText( micro, fs, ImVec2( IM_ROUND( origin.x + icon_sz.x + 7.f * s ), IM_ROUND( y + 4.f * s ) ),
+            text.to_im_color( 0.85f ), tr( "Spotify" ) );
+
+        // Everything that is not a transport control lives behind the dots, so the face of the
+        // player stays down to the cover, the bar and the five buttons.
+        const ImVec2 dc( origin.x + w - 10.f * s, IM_ROUND( y + 8.f * s ) );
+        const ImVec2 half( 11.f * s, 9.f * s );
+        ImGui::SetCursorScreenPos( dc - half );
+        opts_clicked = ImGui::InvisibleButton( "##sp_opts_btn", half * 2.f );
+        const bool opts_up = ImGui::IsPopupOpen( ImGui::GetID( "##sp_opts" ), ImGuiPopupFlags_None );
+        const float dt_ = cfg_anim( ImGui::GetID( "##sp_opts_btn" ), ImGui::IsItemHovered( ) || opts_up );
+        if ( dt_ > 0.01f )
+            draw->AddRectFilled( dc - half, dc + half, frame_inactive.to_im_color( 0.85f * dt_ ), 6.f * s );
+        const ImU32 dots_col = cfg_mix( c_dim, c_text, ImMax( dt_, opts_up ? 1.f : 0.f ) );
+        for ( int i = -1; i <= 1; ++i )
+            draw->AddCircleFilled( ImVec2( IM_ROUND( dc.x + i * 4.f * s ), IM_ROUND( dc.y ) ), 1.4f * s, dots_col, 12 );
+    }
+    y += 24.f * s;
+
+    // Submitted before the offline branch returns, so the card survives Spotify closing under it.
+    {
+        bool wants = false;
+        const float a = popup_animation( "##sp_opts", opts_clicked, wants );
+        if ( begin_popup_card_at( "##sp_opts", wants, a,
+                                  ImVec2( self->Pos.x + self->Size.x + 8.f * s, self->Pos.y ),
+                                  ImVec2( 0.f, 0.f ), 272.f ) ) {
+            ImGui::PushItemWidth( ImGui::GetContentRegionAvail( ).x );
+
+            // A row that cannot do anything goes dark, and eases its colour back when it can -
+            // rather than popping. Each gate is scoped to exactly the rows it governs.
+            const auto gate_begin = [ & ]( const char* id, bool on ) {
+                const float lit = cfg_anim( ImGui::GetID( id ), on, 10.f );
+                ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImGui::GetStyle( ).Alpha * ImLerp( 0.38f, 1.f, lit ) );
+                ImGui::BeginDisabled( !on );
+            };
+            const auto gate_end = [ ]( ) {
+                ImGui::EndDisabled( );
+                ImGui::PopStyleVar( );
+            };
+
+            static float muted_at = 0.70f;
+            const bool was_muted = st.has_volume && st.volume <= 0.001f;
+            bool muted = was_muted;
+            gate_begin( "##sp_vol_lit", st.has_volume );
+            if ( popup_toggle( ICON_FA_VOLUME_MUTE, "Mute", &muted ) && muted != was_muted ) {
+                if ( muted ) { muted_at = ImMax( st.volume, 0.05f ); spotify::set_volume( 0.f ); }
+                else         { spotify::set_volume( muted_at ); }
+            }
+            gate_end( );
+
+            popup_separator( );
+            {
+                const bool was = spotify_lyrics;
+                popup_toggle( ICON_FA_MICROPHONE_ALT, "Show Lyrics", &spotify_lyrics );
+                if ( spotify_lyrics != was )
+                    spotify::set_lyrics_enabled( spotify_lyrics );
+            }
+            {
+                static const char* const bg_modes[] = { "With Lyrics Background", "Without Lyrics Background" };
+                gate_begin( "##sp_bg_lit", spotify_lyrics );
+                popup_option( ICON_FA_IMAGE, "Background", bg_modes, IM_ARRAYSIZE( bg_modes ), &spotify_lyrics_bg );
+                gate_end( );
+            }
+
+            {
+                const bool was = spotify_gif;
+                popup_toggle( ICON_FA_FILM, "Preview GIF", &spotify_gif );
+                if ( spotify_gif != was )
+                    gifbg::set_enabled( spotify_gif );
+                info_tooltip( "Preview GIF",
+                    "Plays a GIF behind the player. Drop files in spotify_gif\\ next to the "
+                    "executable, named \"<artist> - <title>.gif\", \"<title>.gif\" or \"default.gif\". "
+                    "Without a matching file the cover art is used instead." );
+            }
+
+            popup_separator( );
+            {
+                // Spotify's own channel in the Windows mixer - the media session API carries no
+                // volume of its own. Indented by the rows' icon column so the label starts on the
+                // same x as theirs, and the track ends on the same x as their switches.
+                const float row_w = popup_row_width( ); // what the rows above actually span
+                const float indent = 36.f * s;
+                gate_begin( "##sp_vols_lit", st.has_volume );
+                ImGui::SetCursorPosX( ImGui::GetCursorPosX( ) + indent );
+                ImGui::PushItemWidth( ImMax( 1.f, row_w - indent ) );
+                int vol = ( int )IM_ROUND( ( st.has_volume ? st.volume : 1.f ) * 100.f );
+                if ( ImGui::SliderInt( "Volume", &vol, 0, 100, "%d%%" ) )
+                    spotify::set_volume( vol / 100.f );
+                ImGui::PopItemWidth( );
+                gate_end( );
+            }
+            ImGui::PopItemWidth( );
+            end_popup_card( );
+        }
+    }
+
+    // ---- nothing to drive: one clear call to action ------------------------------------------
+    if ( !connected ) {
+        const float panel_h = 118.f * s;
+
+        const char* head = st.status == spotify::status_t::not_running ? tr( "Spotify is not running" )
+                         : st.status == spotify::status_t::idle        ? tr( "Nothing is playing" )
+                                                                       : tr( "Media controls unavailable" );
+        const char* sub  = st.status == spotify::status_t::not_running ? tr( "Start it and this connects on its own." )
+                         : st.status == spotify::status_t::idle        ? tr( "Play something in Spotify to take over." )
+                                                                       : tr( "This build of Windows exposes no media session." );
+
+        // a slow accent breath behind the glyph, so the empty state is not a dead rectangle
+        const float breath = 0.5f + 0.5f * sinf( sp_ui.beat * 1.4f );
+        const ImVec2 gc( origin.x + w * 0.5f, y + 24.f * s );
+        for ( int i = 3; i >= 1; --i )
+            draw->AddCircle( gc, ( 13.f + i * 5.f + breath * 2.f ) * s,
+                accent_color.to_im_color( 0.13f / i ), 40, 1.5f * s );
+
+        const float gfs = body->FontSize; // baked size, not 1.5x of a 13px face
+        const ImVec2 gsz = body->CalcTextSizeA( gfs, FLT_MAX, 0.f, ICON_FA_MUSIC );
+        draw->AddText( body, gfs, ImVec2( IM_ROUND( gc.x - gsz.x * 0.5f ),
+                                          IM_ROUND( gc.y - TextInkCenterY( body, gfs, ICON_FA_MUSIC ) ) ),
+            accent_color.to_im_color( 0.85f ), ICON_FA_MUSIC );
+
+        const ImVec2 hsz = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, head );
+        draw->AddText( bold, bold->FontSize, ImVec2( IM_ROUND( origin.x + ( w - hsz.x ) * 0.5f ),
+                                                     IM_ROUND( y + 46.f * s ) ), text.to_im_color( ), head );
+
+        const ImVec2 ssz = micro->CalcTextSizeA( micro->FontSize, FLT_MAX, 0.f, sub );
+        draw->AddText( micro, micro->FontSize, ImVec2( IM_ROUND( origin.x + ( w - ssz.x ) * 0.5f ),
+                                                       IM_ROUND( y + 68.f * s ) ), text_disabled.to_im_color( ), sub );
+
+        if ( st.status != spotify::status_t::unsupported ) {
+            const char* label = st.status == spotify::status_t::idle ? tr( "Open Spotify" ) : tr( "Open Spotify" );
+            const float bh = 30.f * s;
+            const float bw = ImMin( w, micro->CalcTextSizeA( micro->FontSize, FLT_MAX, 0.f, label ).x + 52.f * s );
+            const ImVec2 bmin( IM_ROUND( origin.x + ( w - bw ) * 0.5f ), IM_ROUND( y + 88.f * s ) );
+
+            ImGui::SetCursorScreenPos( bmin );
+            const bool pressed = ImGui::InvisibleButton( "##sp_open", ImVec2( bw, bh ) );
+            const float t = cfg_anim( ImGui::GetID( "##sp_open" ), ImGui::IsItemHovered( ) );
+            const float press = ImGui::IsItemActive( ) ? 1.f : 0.f;
+
+            const ImVec2 grow( 2.f * s * t - 1.f * s * press, 1.f * s * t - 0.5f * s * press );
+            draw->AddRectFilled( bmin - grow, bmin + ImVec2( bw, bh ) + grow,
+                accent_color.to_im_color( 0.85f + 0.15f * t ), ( bh * 0.5f ) );
+            if ( t > 0.01f )
+                draw->AddRect( bmin - grow - ImVec2( 3.f, 3.f ) * s, bmin + ImVec2( bw, bh ) + grow + ImVec2( 3.f, 3.f ) * s,
+                    accent_color.to_im_color( 0.30f * t ), bh * 0.5f + 3.f * s, 0, 1.5f * s );
+
+            const ImVec2 lsz = micro->CalcTextSizeA( micro->FontSize, FLT_MAX, 0.f, label );
+            const ImVec2 isz = body->CalcTextSizeA( body->FontSize, FLT_MAX, 0.f, ICON_FA_EXTERNAL_LINK_ALT );
+            const float block = isz.x + 7.f * s + lsz.x;
+            const float bx = bmin.x + ( bw - block ) * 0.5f;
+            const float by = bmin.y + bh * 0.5f;
+            draw->AddText( body, body->FontSize, ImVec2( IM_ROUND( bx ),
+                IM_ROUND( by - TextInkCenterY( body, body->FontSize, ICON_FA_EXTERNAL_LINK_ALT ) ) ),
+                IM_COL32( 255, 255, 255, ( int )( 255.f * ca ) ), ICON_FA_EXTERNAL_LINK_ALT );
+            draw->AddText( micro, micro->FontSize, ImVec2( IM_ROUND( bx + isz.x + 7.f * s ),
+                IM_ROUND( by - TextLineCenterY( micro, micro->FontSize ) ) ),
+                IM_COL32( 255, 255, 255, ( int )( 255.f * ca ) ), label );
+
+            if ( pressed )
+                spotify::launch( );
+        }
+
+        ImGui::SetCursorScreenPos( ImVec2( origin.x, y + panel_h ) );
+        ImGui::End( );
+        ImGui::PopStyleColor( );
+        ImGui::PopStyleVar( 4 );
+        return;
+    }
+
+    // ---- connected ---------------------------------------------------------------------------
+    const float art_sz = 64.f * s;
+
+    ImU32 pal_a = 0, pal_b = 0;
+    int   motif = 0;
+    sp_palette( st.title + st.album, pal_a, pal_b, motif );
+
+    // ---- cover + track ---------------------------------------------------------------------
+    {
+        const ImVec2 art_min( origin.x, y );
+        const ImVec2 art_max = art_min + ImVec2( art_sz, art_sz );
+        const float  art_round = 10.f * s;
+
+        // The glow behind the sleeve is the only thing that moves on its own while a track plays -
+        // it is what makes a paused player read as paused at a glance.
+        const float glow = ( 0.35f + 0.65f * ( 0.5f + 0.5f * sinf( sp_ui.beat * 2.2f ) ) ) * sp_ui.play_t;
+        for ( int i = 3; i >= 1; --i )
+            draw->AddRect( art_min - ImVec2( i * 2.f, i * 2.f ) * s, art_max + ImVec2( i * 2.f, i * 2.f ) * s,
+                accent_color.to_im_color( 0.10f * glow / i ), art_round + i * 2.f * s, 0, 2.f * s );
+
+        // the hashed sleeve underneath, the real cover fading in over it on every track change
+        sp_draw_cover( draw, pal_a, pal_b, motif, art_min, art_max, art_round, ca, sp_ui.beat * 0.11f );
+        if ( void* art = spotify::art_view( ) )
+            draw->AddImageRounded( ( ImTextureID )art, art_min, art_max, ImVec2( 0.f, 0.f ), ImVec2( 1.f, 1.f ),
+                IM_COL32( 255, 255, 255, ( int )( 255.f * ca * ease ) ), art_round );
+
+        // ---- title / artist / album ----
+        const float tx = origin.x + art_sz + 14.f * s;
+        const float link_w = 22.f * s;
+        const float tw = origin.x + w - tx - link_w;
+        const float slide = ( 1.f - ease ) * 10.f * s;
+
+        const char* title  = st.title.empty( )  ? tr( "Unknown track" ) : st.title.c_str( );
+        const char* artist = st.artist.empty( ) ? tr( "Unknown artist" ) : st.artist.c_str( );
+
+        draw->PushClipRect( ImVec2( tx, y ), ImVec2( tx + tw, y + art_sz ), true );
+        {
+            // Marquee with a hold at each end, so a long title is readable instead of always moving.
+            const float fs = bold->FontSize;
+            const ImVec2 sz = bold->CalcTextSizeA( fs, FLT_MAX, 0.f, title );
+            float x = tx;
+            if ( sz.x > tw ) {
+                const float u = ImFmod( ( float )ImGui::GetTime( ) * 0.16f, 1.f );
+                float k = ImSaturate( ( u - 0.15f ) / 0.32f ) - ImSaturate( ( u - 0.66f ) / 0.32f );
+                k = k * k * ( 3.f - 2.f * k );
+                x -= ( sz.x - tw ) * k;
+            }
+            draw->AddText( bold, fs, ImVec2( IM_ROUND( x ), IM_ROUND( y + 4.f * s + slide ) ),
+                text.to_im_color( ease ), title );
+        }
+        draw->AddText( small, small->FontSize, ImVec2( IM_ROUND( tx ), IM_ROUND( y + 26.f * s + slide * 1.4f ) ),
+            cfg_mix( c_dim, c_text, 0.55f * ease ), artist );
+        if ( !st.album.empty( ) )
+            draw->AddText( micro, micro->FontSize, ImVec2( IM_ROUND( tx ), IM_ROUND( y + 44.f * s + slide * 1.8f ) ),
+                text_disabled.to_im_color( 0.75f * ease ), st.album.c_str( ) );
+        draw->PopClipRect( );
+
+        if ( icon_button( "##sp_focus", ImVec2( origin.x + w - 10.f * s, y + 12.f * s ), 24.f * s,
+                          ICON_FA_EXTERNAL_LINK_ALT, body, body->FontSize, 0.f, 0.10f, true ) )
+            spotify::launch( ); // already running, so this brings its window forward
+    }
+    y += art_sz + 14.f * s;
+
+
+    // ---- progress ----------------------------------------------------------------------------
+    {
+        const float bar_h = 4.f * s;
+        const ImVec2 bar_min( origin.x, IM_ROUND( y + 4.f * s ) );
+        const float  bar_w = w;
+
+        ImGui::SetCursorScreenPos( ImVec2( bar_min.x, bar_min.y - 9.f * s ) );
+        ImGui::InvisibleButton( "##sp_seek", ImVec2( bar_w, bar_h + 18.f * s ) );
+        const bool bar_hot = st.can_seek && ( ImGui::IsItemHovered( ) || ImGui::IsItemActive( ) );
+        const bool active  = st.can_seek && ImGui::IsItemActive( );
+
+        // Committed on release, not per frame: a seek is an IPC round trip to Spotify and firing
+        // one every frame of a drag makes the app stutter. spotify::seek() carries the local
+        // position with it, so the bar stays where it was dropped instead of snapping back for the
+        // poll or two it takes the app to report the new one.
+        static float drag_t = 0.f;
+        if ( active && bar_w > 0.f )
+            drag_t = ImSaturate( ( io.MousePos.x - bar_min.x ) / bar_w );
+        if ( sp_ui.seeking && !active && st.duration > 0.0 )
+            spotify::seek( drag_t * st.duration );
+        sp_ui.seeking = active;
+        if ( active )
+            sp_ui.fill_t = drag_t;
+
+        const float hot = cfg_anim( ImGui::GetID( "##sp_seek" ), bar_hot );
+        const float grow = bar_h * ( 1.f + 0.55f * hot );
+        const ImVec2 bmin( bar_min.x, IM_ROUND( bar_min.y - ( grow - bar_h ) * 0.5f ) );
+        const ImVec2 bmax( bar_min.x + bar_w, bmin.y + grow );
+
+        draw->AddRectFilled( bmin, bmax, frame_inactive.to_im_color( 0.9f ), grow * 0.5f );
+        const float fx = bmin.x + bar_w * sp_ui.fill_t;
+        if ( fx > bmin.x + 0.5f ) {
+            draw->AddRectFilled( bmin, ImVec2( fx, bmax.y ), accent_color.to_im_color( ), grow * 0.5f );
+            const float sweep = ImFmod( sp_ui.beat * 0.35f, 1.f ) * ( fx - bmin.x );
+            draw->PushClipRect( bmin, ImVec2( fx, bmax.y ), true );
+            draw->AddRectFilled( ImVec2( bmin.x + sweep - 18.f * s, bmin.y ), ImVec2( bmin.x + sweep + 18.f * s, bmax.y ),
+                IM_COL32( 255, 255, 255, ( int )( 34.f * ca * sp_ui.play_t ) ), grow * 0.5f );
+            draw->PopClipRect( );
+        }
+        if ( hot > 0.01f )
+            draw->AddCircleFilled( ImVec2( fx, ( bmin.y + bmax.y ) * 0.5f ), 5.f * s * hot, text.to_im_color( ), 24 );
+
+        char a[ 16 ], b[ 16 ];
+        sp_format_time( a, IM_ARRAYSIZE( a ), active ? drag_t * st.duration : st.position );
+        sp_format_time( b, IM_ARRAYSIZE( b ), st.duration );
+        const float fs = micro->FontSize;
+        const ImVec2 bsz = micro->CalcTextSizeA( fs, FLT_MAX, 0.f, b );
+        const float ty = IM_ROUND( bmax.y + 7.f * s );
+        draw->AddText( micro, fs, ImVec2( IM_ROUND( origin.x ), ty ), text_disabled.to_im_color( ), a );
+        draw->AddText( micro, fs, ImVec2( IM_ROUND( origin.x + w - bsz.x ), ty ), text_disabled.to_im_color( ), b );
+    }
+    y += 30.f * s;
+
+    // ---- transport ---------------------------------------------------------------------------
+    {
+        const float cy = y + 20.f * s;
+        const float cx = origin.x + w * 0.5f;
+        const float gap = 36.f * s;
+
+        if ( icon_button( "##sp_shuffle", ImVec2( cx - gap * 2.f, cy ), 24.f * s, ICON_FA_RANDOM,
+                          body, body->FontSize, st.shuffle ? 1.f : 0.f, 0.12f, st.can_shuffle ) )
+            spotify::set_shuffle( !st.shuffle );
+
+        if ( icon_button( "##sp_prev", ImVec2( cx - gap, cy ), 27.f * s, ICON_FA_STEP_BACKWARD,
+                          body, body->FontSize, 0.f, 0.12f, st.can_previous ) )
+            spotify::previous( );
+
+        // play / pause: the accent disc, with the two glyphs cross-fading through play_t
+        {
+            const float r = 18.f * s;
+            ImGui::SetCursorScreenPos( ImVec2( cx - r, cy - r ) );
+            const bool pressed = ImGui::InvisibleButton( "##sp_play", ImVec2( r * 2.f, r * 2.f ) );
+            const bool hovered = ImGui::IsItemHovered( );
+            const bool held = ImGui::IsItemActive( );
+            const float t = cfg_anim( ImGui::GetID( "##sp_play" ), hovered );
+            const float k = 1.f + 0.07f * t - ( held ? 0.06f : 0.f );
+
+            draw->AddCircleFilled( ImVec2( cx, cy ), r * k * 1.28f, accent_color.to_im_color( 0.16f * t ), 40 );
+            draw->AddCircleFilled( ImVec2( cx, cy ), r * k, accent_color.to_im_color( ), 48 );
+
+            const float fs = body->FontSize; // the disc scales on hover, the glyph never does
+            const auto glyph = [ & ]( const char* g, float a, float dx ) {
+                if ( a <= 0.01f ) return;
+                const ImVec2 sz = body->CalcTextSizeA( fs, FLT_MAX, 0.f, g );
+                draw->AddText( body, fs, ImVec2( IM_ROUND( cx - sz.x * 0.5f + dx ),
+                                                 IM_ROUND( cy - TextInkCenterY( body, fs, g ) ) ),
+                    IM_COL32( 255, 255, 255, ( int )( 255.f * a * ca ) ), g );
+            };
+            glyph( ICON_FA_PLAY,  1.f - sp_ui.play_t, 1.f * s ); // the triangle's ink sits left of centre
+            glyph( ICON_FA_PAUSE, sp_ui.play_t,       0.f );
+
+            if ( pressed && st.can_play_pause )
+                spotify::toggle_play( );
+        }
+
+        if ( icon_button( "##sp_next", ImVec2( cx + gap, cy ), 27.f * s, ICON_FA_STEP_FORWARD,
+                          body, body->FontSize, 0.f, 0.12f, st.can_next ) )
+            spotify::next( );
+
+        if ( icon_button( "##sp_repeat", ImVec2( cx + gap * 2.f, cy ), 24.f * s,
+                          st.repeat == spotify::repeat_t::one ? ICON_FA_REDO_ALT : ICON_FA_REDO,
+                          body, body->FontSize, st.repeat != spotify::repeat_t::off ? 1.f : 0.f,
+                          0.12f, st.can_repeat ) )
+            spotify::cycle_repeat( );
+
+        if ( st.repeat == spotify::repeat_t::one )
+            draw->AddCircleFilled( ImVec2( cx + gap * 2.f, cy + 10.f * s ), 1.6f * s, accent_color.to_im_color( ), 12 );
+    }
+    y += 44.f * s;
+
+    // ---- lyrics -------------------------------------------------------------------------------
+    {
+        const spotify::lyrics_t& ly = spotify::lyrics( );
+        const bool want = spotify_lyrics && ly.state != spotify::lyrics_state_t::off;
+        sp_ui.lyrics_t = ImLerp( sp_ui.lyrics_t, want ? 1.f : 0.f,
+                                 1.f - expf( -ImClamp( io.DeltaTime, 0.f, 0.1f ) * 10.f ) );
+
+        const float panel_h = lyrics_h;
+        if ( panel_h > 1.f ) {
+            const ImVec2 pmin( origin.x, IM_ROUND( origin.y + lyrics_top ) );
+            const ImVec2 pmax( origin.x + w, pmin.y + panel_h );
+            const float  pr = 12.f * s;
+
+            // "With Lyrics Background": the sleeve itself, blown up well past its own resolution
+            // and scrimmed. The magnification is the blur - there is no second pass to pay for.
+            draw->AddRectFilled( pmin, pmax, frame_inactive.to_im_color( 0.55f ), pr );
+
+            // The whole card is already wearing the backdrop, which runs behind this panel too, so
+            // the panel gives up its own copy as that fades in - a second crop of the same image
+            // inside the first is what turns a wash into noise - and pays for the loss with a
+            // deeper scrim, which is all the lyrics needed from it.
+            const float own_bg = 1.f - ImClamp( bg_t, 0.f, 1.f );
+            if ( spotify_lyrics_bg == 0 && own_bg > 0.004f ) {
+                if ( void* art = spotify::art_view( ) ) {
+                    draw->PushClipRect( pmin, pmax, true );
+                    // Cover-crop: the sleeve is square and the panel is wide, so it keeps the full
+                    // width and gives up the top and bottom of the image.
+                    const float uvh = ImMin( 1.f, panel_h / ImMax( pmax.x - pmin.x, 1.f ) );
+                    const ImVec2 uv0( 0.f, 0.5f - uvh * 0.5f );
+                    const ImVec2 uv1( 1.f, 0.5f + uvh * 0.5f );
+                    draw->AddImageRounded( ( ImTextureID )art, pmin, pmax, uv0, uv1,
+                        IM_COL32( 255, 255, 255, ( int )( 125.f * ca * own_bg ) ), pr );
+                    draw->AddRectFilled( pmin, pmax, IM_COL32( 6, 8, 14, ( int )( 200.f * ca * own_bg ) ), pr );
+                    draw->PopClipRect( );
+                }
+            }
+            if ( bg_t > 0.004f )
+                draw->AddRectFilled( pmin, pmax, IM_COL32( 6, 8, 14, ( int )( 96.f * ca * bg_t ) ), pr );
+
+            ImFont* big = atlas->Fonts.Size > 8 ? atlas->Fonts[ 8 ] : bold;
+            ImFont* lil = atlas->Fonts.Size > 9 ? atlas->Fonts[ 9 ] : small;
+            const float inset = 14.f * s;
+            const float wrap = w - inset * 2.f;
+
+            draw->PushClipRect( pmin, pmax, true );
+            if ( ly.state != spotify::lyrics_state_t::ready || ly.lines.empty( ) ) {
+                const char* note = ly.state == spotify::lyrics_state_t::loading ? tr( "Loading lyrics" )
+                                                                               : tr( "No lyrics for this track" );
+                const ImVec2 nsz = lil->CalcTextSizeA( lil->FontSize, FLT_MAX, 0.f, note );
+                draw->AddText( lil, lil->FontSize,
+                    ImVec2( IM_ROUND( pmin.x + ( w - nsz.x ) * 0.5f ),
+                            IM_ROUND( ( pmin.y + pmax.y ) * 0.5f - lil->FontSize * 0.5f ) ),
+                    text_disabled.to_im_color( ), note );
+            }
+            else {
+                const int active = ly.synced ? spotify::lyrics_index( st.position ) : -1;
+                if ( active != sp_ui.lyrics_line ) {
+                    sp_ui.lyrics_line = active;
+                    sp_ui.lyrics_line_t = 0.f;
+                }
+
+                // One pass to lay the block out, a second to draw the part of it that is on screen.
+                const int count = ( int )ly.lines.size( );
+                float cursor = 0.f, active_y = 0.f, active_h = 0.f, total_lines_h = 0.f;
+                for ( int i = 0; i < count; ++i ) {
+                    ImFont* f = ( i == active ) ? big : lil;
+                    const float lh = ly.lines[ i ].text.empty( )
+                        ? f->FontSize * 0.55f
+                        : f->CalcTextSizeA( f->FontSize, FLT_MAX, wrap, ly.lines[ i ].text.c_str( ) ).y;
+                    if ( i == active ) { active_y = cursor; active_h = lh; }
+                    cursor += lh + 10.f * s;
+                }
+                total_lines_h = cursor;
+
+                float target = 0.f;
+                if ( active >= 0 ) {
+                    target = active_y + active_h * 0.5f - panel_h * 0.42f;
+                }
+                else if ( !ly.synced && st.duration > 0.0 ) {
+                    // Nothing to sync to, so it drifts with the track instead of sitting still.
+                    target = ( float )( st.position / st.duration ) * ImMax( 0.f, total_lines_h - panel_h * 0.6f );
+                }
+                target = ImClamp( target, -panel_h * 0.25f, ImMax( 0.f, total_lines_h - panel_h * 0.5f ) );
+                sp_ui.lyrics_scroll = ImLerp( sp_ui.lyrics_scroll, target,
+                                              1.f - expf( -ImClamp( io.DeltaTime, 0.f, 0.1f ) * 9.f ) );
+
+                cursor = 0.f;
+                for ( int i = 0; i < count; ++i ) {
+                    ImFont* f = ( i == active ) ? big : lil;
+                    const char* txt = ly.lines[ i ].text.c_str( );
+                    const float lh = ly.lines[ i ].text.empty( )
+                        ? f->FontSize * 0.55f
+                        : f->CalcTextSizeA( f->FontSize, FLT_MAX, wrap, txt ).y;
+
+                    const float ly_top = pmin.y + 10.f * s + cursor - sp_ui.lyrics_scroll;
+                    cursor += lh + 10.f * s;
+                    if ( ly_top > pmax.y || ly_top + lh < pmin.y || ly.lines[ i ].text.empty( ) )
+                        continue;
+
+                    // Read: bright on the line being sung, falling away above and below it, and
+                    // fading again at the panel's own edges so nothing is cut mid-glyph.
+                    float a;
+                    if ( i == active ) {
+                        a = 1.f;
+                    }
+                    else if ( active < 0 ) {
+                        a = 0.62f;
+                    }
+                    else {
+                        const int d = i - active;
+                        a = d < 0 ? 0.26f : ImMax( 0.30f, 0.62f - 0.10f * ( d - 1 ) );
+                    }
+                    const float mid = ly_top + lh * 0.5f;
+                    a *= ImSaturate( ( mid - pmin.y ) / ( 26.f * s ) ) * ImSaturate( ( pmax.y - mid ) / ( 26.f * s ) );
+                    if ( a <= 0.01f )
+                        continue;
+
+                    const ImU32 col = ( i == active ) ? accent_color.to_im_color( a )
+                                                      : text.to_im_color( a * 0.9f );
+
+                    const float slide = ( i == active ) ? ( 1.f - sp_ui.lyrics_line_t ) * 5.f * s : 0.f;
+                    draw->AddText( f, f->FontSize, ImVec2( IM_ROUND( pmin.x + inset ), IM_ROUND( ly_top + slide ) ),
+                        col, txt, nullptr, wrap );
+                }
+            }
+            draw->PopClipRect( );
+
+            y += panel_h + 6.f * s;
+        }
+    }
+
+    ImGui::SetCursorScreenPos( ImVec2( origin.x, origin.y + total_h ) );
+    ImGui::End( );
+    ImGui::PopStyleColor( );
+    ImGui::PopStyleVar( 4 );
+}
+
 void c_gui::user_profile( ImVec2 min, ImVec2 max, void* avatar_tex ) {
     spotify_tick( ); // before the SkipItems bail: the player keeps running with the card closed
 
@@ -4837,40 +4802,4 @@ int c_gui::search_bar( ImVec2 top_right ) {
         ImGui::ClearActiveID( );
     }
     return result;
-}
-
-// ============================================================================
-// Missing function implementations for text rendering
-// ============================================================================
-
-float TextLineCenterY(const ImFont* font, float font_size) {
-    // Returns the optical center of a line of text (cap band)
-    // This approximation works for most fonts
-    return font_size * 0.35f; // Approximate cap height center
-}
-
-float TextInkCenterY(const ImFont* font, float font_size, const char* text, const char* text_end) {
-    // Returns half-height of actual ink for centering on rendered pixels
-    ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text, text_end);
-    return text_size.y * 0.5f;
-}
-
-void RenderScrollingText(ImDrawList* draw, ImGuiID id, const ImRect& rect, const char* text,
-                        ImU32 color, bool hovered, ImFont* font, float font_size) {
-    // Simplified implementation - just clips text to rect without scrolling animation
-    if (!font) font = ImGui::GetFont();
-    if (font_size == 0.0f) font_size = ImGui::GetFontSize();
-    
-    ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text);
-    ImVec2 pos = rect.Min;
-    
-    // Center vertically
-    if (text_size.y < rect.GetHeight()) {
-        pos.y += (rect.GetHeight() - text_size.y) * 0.5f;
-    }
-    
-    // Clip to rect
-    draw->PushClipRect(rect.Min, rect.Max, true);
-    draw->AddText(font, font_size, pos, color, text);
-    draw->PopClipRect();
 }

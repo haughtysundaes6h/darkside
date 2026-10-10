@@ -49,14 +49,14 @@ bool c_hooks::initialize() {
     return true;
 }
 void c_hooks::destroy( ) {
-	hooks::enable_cursor::unhook( );
+	// Stop new Present callbacks before tearing down ImGui/D3D resources.
+	present::m_present.unhook( );
 	g_directx->unitialize( );
 
 	create_move::m_create_move.unhook( );
 	validate_view_angles::m_validate_view_angles.unhook( );
 	enable_cursor::m_enable_cursor.unhook( );
 	mouse_input_enabled::m_mouse_input_enabled.unhook( );
-	present::m_present.unhook( );
 	update_global_vars::m_update_global_vars.unhook( );
 	frame_stage_notify::m_frame_stage_notify.unhook( );
 	override_view::m_override_view.unhook( );
@@ -344,7 +344,8 @@ void hooks::enable_cursor::unhook( ) {
 HRESULT hooks::present::hk_present( IDXGISwapChain* swap_chain, unsigned int sync_interval, unsigned int flags ) {
 	static auto original = m_present.get_original< decltype( &hk_present ) >( );
 
-	g_directx->start_frame( swap_chain );
+	if (!g_directx->start_frame(swap_chain))
+		return original(swap_chain, sync_interval, flags);
 
 	g_directx->new_frame( );
 	{
