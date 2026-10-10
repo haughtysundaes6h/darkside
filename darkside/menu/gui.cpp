@@ -1616,8 +1616,8 @@ bool c_gui::row_slider_with_gear( const char* label, int* v, int min_val, int ma
     float& auto_anim = auto_anims[ImGui::GetID("##auto")];
     auto_anim = ImLerp(auto_anim, auto_enabled ? 1.f : (auto_hovered ? 0.3f : 0.f), g.IO.DeltaTime * 12.f);
     
-    draw->AddRectFilled(auto_bb.Min, auto_bb.Max, 
-        auto_enabled ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim), 4.f * s);
+    ImU32 auto_bg_col = auto_enabled ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim);
+    draw->AddRectFilled(auto_bb.Min, auto_bb.Max, auto_bg_col, 4.f * s);
     
     ImVec2 auto_text_size = ImGui::CalcTextSize(auto_text);
     ImU32 auto_text_col = auto_enabled ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color();
@@ -1742,8 +1742,8 @@ void c_gui::row_slider_auto( const char* label, int* v, int min_val, int max_val
     float& auto_anim = auto_anims[ImGui::GetID("##auto")];
     auto_anim = ImLerp(auto_anim, is_auto ? 1.f : (auto_hovered ? 0.3f : 0.f), g.IO.DeltaTime * 12.f);
     
-    draw->AddRectFilled(auto_bb.Min, auto_bb.Max, 
-        is_auto ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim), 4.f * s);
+    ImU32 auto_bg_col2 = is_auto ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim);
+    draw->AddRectFilled(auto_bb.Min, auto_bb.Max, auto_bg_col2, 4.f * s);
     
     const char* auto_text = "Auto";
     ImVec2 auto_text_size = ImGui::CalcTextSize(auto_text);
@@ -1871,8 +1871,8 @@ bool c_gui::row_slider_auto_with_gear( const char* label, int* v, int min_val, i
     float& auto_anim = auto_anims[ImGui::GetID("##auto_btn")];
     auto_anim = ImLerp(auto_anim, is_auto ? 1.f : (auto_hovered ? 0.3f : 0.f), g.IO.DeltaTime * 12.f);
     
-    draw->AddRectFilled(auto_bb.Min, auto_bb.Max, 
-        is_auto ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim), 4.f * s);
+    ImU32 auto_bg_col3 = is_auto ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim);
+    draw->AddRectFilled(auto_bb.Min, auto_bb.Max, auto_bg_col3, 4.f * s);
     
     const char* auto_text = "Auto";
     ImVec2 auto_text_size = ImGui::CalcTextSize(auto_text);
