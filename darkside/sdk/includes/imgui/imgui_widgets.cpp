@@ -47,6 +47,7 @@ Index of this file:
 #include "../../../menu/gui.hpp"
 #include "../../../menu/blur.hpp"
 #include "../../../menu/hashes.hpp"
+#include "../../../menu/binds.hpp"
 
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
@@ -1359,6 +1360,11 @@ bool ImGui::Checkbox(const char* label, bool* v)
     if (!ItemAdd(total_bb, id))
         return false;
 
+    const ImGuiLastItemData bind_item_data = g.LastItemData;
+    const menu_binds::target_id bind_target =
+        menu_binds::checkbox_item(window, id, label, total_bb, v);
+    g.LastItemData = bind_item_data;
+
     // ---------------------------------------------------------
     // Input
     // ---------------------------------------------------------
@@ -1489,6 +1495,8 @@ bool ImGui::Checkbox(const char* label, bool* v)
         hovered
     );
 
+    if (pressed)
+        menu_binds::sync_bool(bind_target, *v);
     return pressed;
 }
 
@@ -3649,7 +3657,13 @@ bool ImGui::SliderScalar( const char* label, ImGuiDataType data_type, void* p_da
     ImRect total_bb( pos, pos + ImVec2( w, row_h ) );
 
     ItemSize( total_bb, style.FramePadding.y );
-    ItemAdd( total_bb, id );
+    if (!ItemAdd(total_bb, id))
+        return false;
+
+    const ImGuiLastItemData bind_item_data = g.LastItemData;
+    const menu_binds::target_id bind_target =
+        menu_binds::slider_item(window, id, label, total_bb, data_type, p_data, p_min, p_max);
+    g.LastItemData = bind_item_data;
 
     static std::unordered_map<ImGuiID, float> row_hover_anims;
     float& row_hover_anim = row_hover_anims[id];
@@ -3660,8 +3674,11 @@ bool ImGui::SliderScalar( const char* label, ImGuiDataType data_type, void* p_da
     if ( format == NULL )
         format = DataTypeGetInfo( data_type )->PrintFmt;
 
-    const bool hovered = ItemHoverable( frame_bb, id );
-    const bool clicked = hovered && IsMouseClicked( 0, id );
+    ImRect hit_bb(frame_bb.Min - ImVec2(4.f, 7.f) * gui.m_scale,
+                  frame_bb.Max + ImVec2(4.f, 7.f) * gui.m_scale);
+    hit_bb.ClipWith(total_bb);
+    const bool hovered = ItemHoverable(hit_bb, id);
+    const bool clicked = hovered && IsMouseClicked(0, id);
     if ( clicked ) {
 
         SetActiveID( id, window );
@@ -3689,8 +3706,13 @@ bool ImGui::SliderScalar( const char* label, ImGuiDataType data_type, void* p_da
         value_changed = true;
     }
 
-    if ( value_changed )
+    if ( value_changed ) {
         MarkItemEdited( id );
+        if (data_type == ImGuiDataType_S32)
+            menu_binds::sync_int(bind_target, *static_cast<int*>(p_data));
+        else if (data_type == ImGuiDataType_Float)
+            menu_binds::sync_float(bind_target, *static_cast<float*>(p_data));
+    }
 
     static std::unordered_map< ImGuiID, float > values;
     auto value = values.find( id );

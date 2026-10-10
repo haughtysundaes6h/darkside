@@ -3,11 +3,17 @@
 #pragma comment(lib, "dxgi.lib")
 
 #include "../menu/runtime.hpp"
+#include "../menu/binds.hpp"
 
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
 
 LRESULT hk_wnd_proc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) {
 	ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
+
+	if (menu_binds::is_capturing() &&
+		((uMsg >= WM_KEYFIRST && uMsg <= WM_KEYLAST) ||
+		 (uMsg >= WM_MOUSEFIRST && uMsg <= WM_MOUSELAST)))
+		return TRUE;
 
 	if ( uMsg == WM_KEYUP && wParam == VK_INSERT ) {
 		g_menu->m_opened = !g_menu->m_opened;

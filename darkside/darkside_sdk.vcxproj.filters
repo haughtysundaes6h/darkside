@@ -66,6 +66,9 @@
     <ClCompile Include="menu\runtime.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="menu\binds.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
     <ClCompile Include="directx\directx.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
@@ -255,6 +258,9 @@
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
     <ClInclude Include="menu\menu.hpp">
+      <Filter>Файлы заголовков</Filter>
+    </ClInclude>
+    <ClInclude Include="menu\binds.hpp">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
     <ClInclude Include="directx\directx.hpp">

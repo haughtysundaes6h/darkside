@@ -1278,62 +1278,31 @@ void c_gui::name_plate( ImVec2 min, float width ) {
     if ( window->SkipItems )
         return;
 
-    ImDrawList*  draw  = window->DrawList;
-    ImFontAtlas* atlas = ImGui::GetIO( ).Fonts;
-    ImFont* top_font = atlas->Fonts[ 4 ]; // Inter-SemiBold 17
-    ImFont* bot_font = atlas->Fonts[ 6 ]; // Inter-SemiBold 12.5
+    ImDrawList* draw = window->DrawList;
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    ImFont* logo_font = atlas->Fonts.Size > 1 ? atlas->Fonts[1] : ImGui::GetFont();
+    static const char* const wordmark = "PASTAWARE";
 
-    static const char* const k_top = "KILLARK";
-    static const char* const k_bot = "DREAM TEAM";
-
-    const ImVec2 rmin( min.x + 6.f, min.y + 5.f ), rmax( min.x + width - 6.f, min.y + 55.f );
-    const float  bar_w = 3.f, bar_gap = 11.f;
-    const float  tx0   = IM_ROUND( rmin.x + 8.f + bar_w + bar_gap );
-    const float  avail = ImMax( rmax.x - tx0 - 4.f, 1.f );
-
-    // tracking is part of the mark, so it is measured with it and shrinks with it
-    float fs_top = top_font->FontSize, fs_bot = bot_font->FontSize;
-    float tr_top = 0.055f * fs_top, tr_bot = 0.20f * fs_bot;
-    const float raw_top = top_font->CalcTextSizeA( fs_top, FLT_MAX, 0.f, k_top ).x + tr_top * 6.f;
-    const float raw_bot = bot_font->CalcTextSizeA( fs_bot, FLT_MAX, 0.f, k_bot ).x + tr_bot * 9.f;
-
-    float k = 1.f;
-    if ( raw_top > avail ) k = ImMin( k, avail / raw_top );
-    if ( raw_bot > avail ) k = ImMin( k, avail / raw_bot );
-    const float probe_h = glyph_cap_h( top_font, fs_top ) + 0.42f * fs_bot + glyph_cap_h( bot_font, fs_bot );
-    if ( probe_h > 40.f ) k = ImMin( k, 40.f / probe_h );
-    if ( k < 1.f ) {
-        fs_top *= k; fs_bot *= k; tr_top *= k; tr_bot *= k;
+    const ImVec2 strip_min(min.x, min.y);
+    const ImVec2 strip_max(min.x + width, min.y + 60.f);
+    const float available_width = width - 24.f;
+    float font_size = logo_font->FontSize;
+    ImVec2 text_size = logo_font->CalcTextSizeA(font_size, FLT_MAX, 0.f, wordmark);
+    if (text_size.x > available_width) {
+        font_size *= available_width / text_size.x;
+        text_size = logo_font->CalcTextSizeA(font_size, FLT_MAX, 0.f, wordmark);
     }
 
-    const float cap_top = glyph_cap_h( top_font, fs_top ), cap_bot = glyph_cap_h( bot_font, fs_bot );
-    const float gap_y   = 0.42f * fs_bot;
-    const float block_h = cap_top + gap_y + cap_bot;
-    const float cy      = ( rmin.y + rmax.y ) * 0.5f;
-    const float top     = cy - block_h * 0.5f;
-    const float y_top   = IM_ROUND( top + cap_top * 0.5f - TextLineCenterY( top_font, fs_top ) );
-    const float y_bot   = IM_ROUND( top + cap_top + gap_y + cap_bot * 0.5f - TextLineCenterY( bot_font, fs_bot ) );
+    const ImVec2 text_pos(
+        IM_ROUND(strip_min.x + 12.f),
+        IM_ROUND((strip_min.y + strip_max.y) * 0.5f - TextLineCenterY(logo_font, font_size)));
 
-    // The rule carries the accent; the mark itself stays plain so the sidebar under it keeps
-    // reading as the loudest thing on the screen.
-    const ImVec2 bmin( IM_ROUND( rmin.x + 8.f ), IM_ROUND( top ) );
-    //draw->AddRectFilled( bmin, ImVec2( bmin.x + bar_w, IM_ROUND( top + block_h ) ),
-    //    accent_color.to_im_color( ), bar_w * 0.5f );
-
-    // Tracked by hand: ImGui has no letter-spacing, and a wordmark without it reads as body text.
-    const auto tracked = [ & ]( ImFont* font, float fs, float y, float track, ImU32 col, const char* s ) {
-        float x = tx0;
-        for ( const char* p = s; *p; ++p ) {
-            if ( *p != ' ' )
-                draw->AddText( font, fs, ImVec2( IM_ROUND( x ), y ), col, p, p + 1 );
-            x += font->CalcTextSizeA( fs, FLT_MAX, 0.f, p, p + 1 ).x + track;
-        }
-    };
-
-    draw->PushClipRect( ImVec2( tx0, rmin.y ), rmax, true );
-    tracked( top_font, fs_top, y_top, tr_top, text.to_im_color( ), k_top );
-    tracked( bot_font, fs_bot, y_bot, tr_bot, text.to_im_color( 0.62f ), k_bot );
-    draw->PopClipRect( );
+    // SST Bold and the one-pixel accent/shadow layer reproduce the compact NEVERLOSE wordmark.
+    draw->PushClipRect(strip_min, strip_max, true);
+    draw->AddText(logo_font, font_size, text_pos + ImVec2(1.f, 1.f),
+                  accent_color.to_im_color(0.38f), wordmark);
+    draw->AddText(logo_font, font_size, text_pos, text.to_im_color(), wordmark);
+    draw->PopClipRect();
 }
 
 void c_gui::chevron_handle( ImGuiID id, ImVec2 pos, ImVec2 size, bool open ) {
@@ -2169,8 +2138,6 @@ void c_gui::apply_theme( int new_theme ) {
 }
 
 void c_gui::apply_style_colors( ) {
-    if ( theme == 0 )
-        return; // the app's default style already is the dark look - leave it byte for byte
     ImVec4* c = ImGui::GetStyle( ).Colors;
     c[ ImGuiCol_Text ]           = text.to_vec4( 1.f, false );
     c[ ImGuiCol_TextDisabled ]   = text_disabled.to_vec4( 1.f, false );
@@ -2304,6 +2271,10 @@ namespace {
         { "Soft",              "Мягкий",              "Yumuşak" },
         { "Strong",            "Сильный",             "Güçlü" },
         { "Always",            "Всегда",              "Her Zaman" },
+        { "Hold",              "Удержание",           "Basılı Tut" },
+        { "Toggle",            "Переключение",        "Aç/Kapat" },
+        { "None",              "Нет",                 "Yok" },
+        { "KEYBINDS",          "БИНДЫ",               "TUŞ ATAMALARI" },
         { "In Air",            "В воздухе",           "Havadayken" },
         { "On Key",            "По клавише",          "Tuşla" },
         { "Classic",           "Классический",        "Klasik" },
@@ -2311,9 +2282,13 @@ namespace {
         // navigation
         { "AIMBOT",            "ПРИЦЕЛ",              "NİŞAN" },
         { "COMMON",            "ОБЩЕЕ",               "GENEL" },
+        { "CUSTOMIZATION",     "КАСТОМИЗАЦИЯ",        "ÖZELLEŞTİRME" },
         { "Rage",              "Рейдж",               "Rage" },
         { "Legit",             "Легит",               "Legit" },
+        { "Anti-Aim",          "Анти-аим",            "Anti Nişan" },
         { "Visuals",           "Визуалы",             "Görseller" },
+        { "Skins",             "Скины",               "Kaplamalar" },
+        { "Config",            "Конфиг",              "Yapılandırma" },
         { "Players",           "Игроки",              "Oyuncular" },
         { "World",             "Мир",                 "Dünya" },
         { "Miscellaneous",     "Разное",              "Çeşitli" },

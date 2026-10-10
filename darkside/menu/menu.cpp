@@ -3,16 +3,126 @@
 #include "hashes.hpp"
 #include "notification.hpp"
 #include "shader_bg.hpp"
+#include "binds.hpp"
 #include "../darkside.hpp"
 #include "../sdk/config_system/config_system.hpp"
 #include "../sdk/includes/imgui/imgui_internal.h"
 
 namespace {
+std::string g_selected_config;
+
+void refresh_config_selection() {
+    g_config_system->refresh();
+    const auto found = std::find(g_config_system->config_files.begin(),
+                                 g_config_system->config_files.end(), g_selected_config);
+    if (found == g_config_system->config_files.end())
+        g_selected_config = g_config_system->config_files.empty() ? std::string{} : g_config_system->config_files.front();
+}
+
 void switch_tab(int tab) {
     if (gui.m_tab == tab)
         return;
     gui.m_tab = tab;
     gui.m_anim = 0.f;
+}
+
+void save_config(const std::string& name) {
+    menu_binds::before_config_save();
+    g_config_system->save(name);
+    menu_binds::after_config_save();
+}
+
+void load_config(const std::string& name) {
+    menu_binds::before_config_save();
+    g_config_system->read(name);
+    menu_binds::on_config_loaded();
+}
+
+void register_bind_targets() {
+    auto& rage = g_cfg->rage_bot;
+    auto& weapon = rage.m_weapon_config[0];
+    menu_binds::register_bool("rage.enabled", "Enabled", &rage.m_enabled);
+    menu_binds::register_bool("rage.silent", "Silent Aim", &rage.m_silent);
+    menu_binds::register_bool("rage.auto_fire", "Automatic Fire", &weapon.m_auto_fire);
+    menu_binds::register_bool("rage.auto_stop", "Automatic Stop", &weapon.m_auto_stop);
+    menu_binds::register_bool("rage.auto_scope", "Automatic Scope", &weapon.m_auto_scope);
+    for (int i = 0; i < 5; ++i) {
+        static const char* names[] = { "Head", "Chest", "Stomach", "Arms", "Legs" };
+        const std::string key = "rage.hitbox." + std::to_string(i);
+        menu_binds::register_bool(key.c_str(), names[i], &weapon.m_hitboxes[i]);
+    }
+    menu_binds::register_int("rage.hit_chance", "Hit Chance", &weapon.m_hit_chance, 0, 100);
+    menu_binds::register_int("rage.minimum_damage", "Minimum Damage", &weapon.m_minimum_damage, 0, 120);
+
+    auto& legit = g_cfg->legit_bot;
+    menu_binds::register_bool("legit.enabled", "Enabled", &legit.m_enabled);
+    menu_binds::register_float("legit.fov", "Field Of View", &legit.m_fov, 0.f, 180.f);
+    menu_binds::register_float("legit.smooth", "Smooth", &legit.m_smooth, 1.f, 20.f);
+    menu_binds::register_bool("legit.triggerbot", "Triggerbot", &legit.m_triggerbot_enabled);
+    menu_binds::register_bool("legit.backtrack", "Backtrack", &legit.m_backtrack_enabled);
+    menu_binds::register_int("legit.backtrack_ticks", "Backtrack Ticks", &legit.m_backtrack_ticks, 0, 15);
+
+    auto& anti = g_cfg->anti_hit;
+    menu_binds::register_int("antiaim.pitch_mode", "Pitch", &anti.m_pitch_mode, 0, 4);
+    menu_binds::register_int("antiaim.pitch_amount", "Pitch Amount", &anti.m_pitch_amount, -89, 89);
+    menu_binds::register_int("antiaim.yaw_mode", "Yaw", &anti.m_yaw_mode, 0, 4);
+    menu_binds::register_int("antiaim.yaw_amount", "Yaw Add", &anti.m_yaw_amount, -180, 180);
+    menu_binds::register_bool("antiaim.at_target", "At Target", &anti.m_at_target);
+
+    auto& esp = g_cfg->visuals.m_player_esp;
+    menu_binds::register_bool("visuals.enabled", "Player ESP", &esp.m_enabled);
+    menu_binds::register_bool("visuals.teammates", "Teammates", &esp.m_teammates);
+    menu_binds::register_bool("visuals.box", "Bounding Box", &esp.m_bounding_box);
+    menu_binds::register_bool("visuals.name", "Name", &esp.m_name);
+    menu_binds::register_bool("visuals.health", "Health", &esp.m_health_bar);
+    menu_binds::register_bool("visuals.weapon", "Weapon", &esp.m_weapon);
+    menu_binds::register_bool("visuals.skeleton", "Skeleton", &esp.m_skeleton);
+    menu_binds::register_int("world.exposure", "Exposure", &g_cfg->world.m_exposure, 0, 100);
+    menu_binds::register_float("world.brightness", "Brightness", &g_cfg->world.m_brightness, 0.f, 1.f);
+    menu_binds::register_bool("world.remove_fog", "Remove Fog", &g_cfg->world.m_render_fog);
+    menu_binds::register_bool("thirdperson.enabled", "Thirdperson", &g_cfg->world_esp.m_enable_thirdperson);
+    menu_binds::register_int("thirdperson.distance", "Thirdperson Distance", &g_cfg->world_esp.m_distance, 50, 300);
+
+    menu_binds::register_bool("misc.bunny_hop", "Bunny Hop", &g_cfg->misc.m_bunny_hop);
+    menu_binds::register_bool("misc.auto_strafe", "Automatic Strafe", &g_cfg->misc.m_auto_strafe);
+    menu_binds::register_int("misc.strafe_type", "Strafe Type", &g_cfg->misc.m_strafe_type, 0, 2);
+    menu_binds::register_int("misc.strafe_smooth", "Strafe Smooth", &g_cfg->misc.m_strafe_smooth, 0, 100);
+    menu_binds::register_bool("menu.shader", "Menu Shader", &shader_bg::state().enabled);
+    menu_binds::register_float("menu.shader_opacity", "Shader Opacity", &shader_bg::state().opacity, 0.f, 1.f);
+
+    menu_binds::register_int("skins.knife", "Knife Model", &g_cfg->skins.m_knives.m_selected, 0, 20);
+    menu_binds::register_int("skins.gloves", "Glove Model", &g_cfg->skins.m_gloves.m_selected, 0, 20);
+    menu_binds::register_int("skins.agent_ct", "Counter-Terrorist", &g_cfg->skins.m_agents.m_selected_ct, 0, 20);
+    menu_binds::register_int("skins.agent_t", "Terrorist", &g_cfg->skins.m_agents.m_selected, 0, 20);
+}
+
+void draw_animated_row(const char* id, bool visible, const std::function<void()>& draw_row) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImGuiID animation_id = window->GetID(id);
+    ImGuiStorage* storage = window->DC.StateStorage;
+    float amount = storage->GetFloat(animation_id, visible ? 1.f : 0.f);
+    amount = ImLerp(amount, visible ? 1.f : 0.f,
+                    1.f - expf(-14.f * ImMin(ImGui::GetIO().DeltaTime, 0.05f)));
+    if (ImAbs(amount - (visible ? 1.f : 0.f)) < 0.002f)
+        amount = visible ? 1.f : 0.f;
+    storage->SetFloat(animation_id, amount);
+    if (amount <= 0.002f)
+        return;
+
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float row_height = ImMax(ImGui::GetFontSize(), 19.f * gui.m_scale) +
+        ImGui::GetStyle().FramePadding.y * 2.f + ImGui::GetStyle().ItemSpacing.y;
+    const float animated_height = row_height * amount;
+    ImGui::PushClipRect(start, start + ImVec2(ImGui::GetContentRegionAvail().x, animated_height), true);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * amount);
+    ImGui::BeginDisabled(amount < 0.98f);
+    ImGui::SetCursorScreenPos(start - ImVec2(0.f, (1.f - amount) * 5.f * gui.m_scale));
+    gui.row_begin();
+    draw_row();
+    ImGui::EndDisabled();
+    ImGui::PopStyleVar();
+    ImGui::PopClipRect();
+    ImGui::SetCursorScreenPos(start + ImVec2(0.f, animated_height));
 }
 
 void draw_top_bar(ImGuiWindow* window) {
@@ -47,9 +157,7 @@ void draw_top_bar(ImGuiWindow* window) {
     draw->AddText(button_pos + ImVec2((save_w - save_size.x) * 0.5f, (30.f - save_size.y) * 0.5f),
                   save_hovered ? gui.accent_color.to_im_color() : gui.text.to_im_color(), ICON_FA_SAVE);
 
-    const char* current_name = "Default";
-    if (!g_config_system->config_files.empty())
-        current_name = g_config_system->config_files.front().c_str();
+    const char* current_name = g_selected_config.empty() ? "None" : g_selected_config.c_str();
     const ImVec2 name_size = ImGui::CalcTextSize(current_name);
     draw->AddText(button_pos + ImVec2(save_w + 12.f, (30.f - name_size.y) * 0.5f),
                   gui.text.to_im_color(), current_name);
@@ -58,15 +166,36 @@ void draw_top_bar(ImGuiWindow* window) {
     draw->AddText(button_pos + ImVec2(total_w - arrow_size.x - 12.f, (30.f - arrow_size.y) * 0.5f),
                   gui.text_disabled.to_im_color(), ICON_FA_CHEVRON_DOWN);
 
-    ImGui::SetCursorScreenPos(button_pos + ImVec2(total_w + 8.f, 0.f));
-    ImGui::Button("DARKSIDE", ImVec2(88.f, 30.f));
-
-    if (save_clicked && !g_config_system->config_files.empty()) {
-        g_config_system->save(g_config_system->config_files.front());
-        PushNotification("Config Saved", "Saved current configuration");
+    if (save_clicked && !g_selected_config.empty()) {
+        save_config(g_selected_config);
+        PushNotification(gui.tr("Config Saved"), gui.trf("Saved changes to %s", g_selected_config.c_str()));
     }
     if (config_clicked)
-        switch_tab(6);
+        refresh_config_selection();
+
+    bool config_open = false;
+    const float config_anim = gui.popup_animation("##top_config_dropdown", config_clicked, config_open);
+    const ImVec2 config_anchor(button_pos.x + save_w, button_pos.y + 36.f * gui.m_scale);
+    if (gui.begin_popup_card_at("##top_config_dropdown", config_open, config_anim,
+                                config_anchor, ImVec2(0.f, 0.f), 220.f)) {
+        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts.Size > 4 ? ImGui::GetIO().Fonts->Fonts[4] : ImGui::GetFont());
+        ImGui::TextUnformatted(gui.tr("Config"));
+        ImGui::PopFont();
+        ImGui::Separator();
+        if (g_config_system->config_files.empty()) {
+            ImGui::TextDisabled("%s", gui.tr("No presets found"));
+        } else {
+            for (const auto& file : g_config_system->config_files) {
+                if (ImGui::Selectable(file.c_str(), file == g_selected_config)) {
+                    g_selected_config = file;
+                    load_config(file);
+                    PushNotification(gui.tr("Config Loaded"), gui.trf("Loaded config: %s", file.c_str()));
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+        }
+        gui.end_popup_card();
+    }
 
     const int search_tab = gui.search_bar(pos + ImVec2(size.x - 15.f * gui.m_scale, 15.f));
     if (search_tab >= 0)
@@ -77,14 +206,18 @@ void draw_top_bar(ImGuiWindow* window) {
 void c_menu::init() {
     gui.apply_theme(0);
     gui.apply_style_colors();
-    gui.user_name = "darkside";
+    gui.user_name = "PASTAWARE";
     gui.user_status = "Till: Lifetime";
     gui.user_till = "Till: Lifetime";
-    g_config_system->refresh();
+    refresh_config_selection();
+    register_bind_targets();
 }
 
 void c_menu::draw() {
+    menu_binds::update();
     render();
+    menu_binds::draw_overlay(m_opened);
+    menu_binds::flush();
 }
 
 void c_menu::draw_rage() {
@@ -144,35 +277,19 @@ void c_menu::draw_legit() {
 }
 
 void c_menu::draw_antiaim() {
-    gui.begin_grid(2);
+    gui.begin_grid(1);
 
     gui.grid_col(0);
     gui.grid_box("ANGLES", k_auto_height);
     static const char* pitch_modes[] = { "Off", "Down", "Up", "Zero", "Custom" };
     gui.row_begin(); ImGui::Combo("Pitch", &g_cfg->anti_hit.m_pitch_mode, pitch_modes, IM_ARRAYSIZE(pitch_modes));
-    if (g_cfg->anti_hit.m_pitch_mode == 4) {
-        gui.row_begin(); ImGui::SliderInt("Pitch Amount", &g_cfg->anti_hit.m_pitch_amount, -89, 89);
-    }
+    draw_animated_row("##custom_pitch", g_cfg->anti_hit.m_pitch_mode == 4, [] {
+        ImGui::SliderInt("Pitch Amount", &g_cfg->anti_hit.m_pitch_amount, -89, 89);
+    });
     static const char* yaw_modes[] = { "Off", "Backward", "Sideways", "Spin", "At Target" };
     gui.row_begin(); ImGui::Combo("Yaw", &g_cfg->anti_hit.m_yaw_mode, yaw_modes, IM_ARRAYSIZE(yaw_modes));
     gui.row_begin(); ImGui::SliderInt("Yaw Add", &g_cfg->anti_hit.m_yaw_amount, -180, 180);
     gui.row_checkbox("At Target", &g_cfg->anti_hit.m_at_target);
-    gui.end_group_box();
-
-    gui.grid_col(1);
-    gui.grid_box("DESYNC", k_auto_height);
-    gui.row_checkbox("Enabled", &g_cfg->anti_hit.m_desync_enabled);
-    static const char* desync_modes[] = { "Static", "Jitter", "Switch" };
-    gui.row_begin(); ImGui::Combo("Mode", &g_cfg->anti_hit.m_desync_mode, desync_modes, IM_ARRAYSIZE(desync_modes));
-    gui.row_begin(); ImGui::SliderInt("Left", &g_cfg->anti_hit.m_desync_left, 0, 60);
-    gui.row_begin(); ImGui::SliderInt("Right", &g_cfg->anti_hit.m_desync_right, 0, 60);
-    gui.end_group_box();
-
-    gui.grid_box("FAKELAG", k_auto_height);
-    gui.row_checkbox("Enabled", &g_cfg->anti_hit.m_fakelag_enabled);
-    static const char* lag_modes[] = { "Static", "Random", "Adaptive" };
-    gui.row_begin(); ImGui::Combo("Mode", &g_cfg->anti_hit.m_fakelag_mode, lag_modes, IM_ARRAYSIZE(lag_modes));
-    gui.row_begin(); ImGui::SliderInt("Limit", &g_cfg->anti_hit.m_fakelag_limit, 1, 15);
     gui.end_group_box();
 
     gui.end_grid();
@@ -251,17 +368,15 @@ void c_menu::draw_skins() {
 
 void c_menu::draw_configs() {
     static char config_name[64] = "default";
-    static int selected = -1;
 
-    g_config_system->refresh();
+    refresh_config_selection();
 
     gui.begin_grid(2);
     gui.grid_col(0);
     gui.grid_box("CONFIGS", 340.f, true);
-    for (int i = 0; i < static_cast<int>(g_config_system->config_files.size()); ++i) {
-        const auto& file = g_config_system->config_files[i];
-        if (ImGui::Selectable(file.c_str(), selected == i)) {
-            selected = i;
+    for (const auto& file : g_config_system->config_files) {
+        if (ImGui::Selectable(file.c_str(), file == g_selected_config)) {
+            g_selected_config = file;
             strncpy_s(config_name, file.c_str(), sizeof(config_name) - 1);
         }
     }
@@ -272,21 +387,27 @@ void c_menu::draw_configs() {
     gui.row_begin(); ImGui::InputText("Name", config_name, sizeof(config_name));
     gui.row_begin();
     if (ImGui::Button("Create", ImVec2(-1.f, 30.f)) && config_name[0]) {
-        g_config_system->save(config_name);
-        g_config_system->refresh();
+        save_config(config_name);
+        refresh_config_selection();
+        g_selected_config = config_name;
     }
     gui.row_begin();
-    if (ImGui::Button("Load", ImVec2(-1.f, 30.f)) && config_name[0])
-        g_config_system->read(config_name);
+    if (ImGui::Button("Load", ImVec2(-1.f, 30.f)) && config_name[0]) {
+        load_config(config_name);
+        g_selected_config = config_name;
+    }
     gui.row_begin();
-    if (ImGui::Button("Save", ImVec2(-1.f, 30.f)) && config_name[0])
-        g_config_system->save(config_name);
+    if (ImGui::Button("Save", ImVec2(-1.f, 30.f)) && config_name[0]) {
+        save_config(config_name);
+        g_selected_config = config_name;
+    }
     gui.row_begin();
     if (ImGui::Button("Delete", ImVec2(-1.f, 30.f)) && config_name[0]) {
         g_config_system->remove(config_name);
-        g_config_system->refresh();
+        if (g_selected_config == config_name)
+            g_selected_config.clear();
+        refresh_config_selection();
         config_name[0] = '\0';
-        selected = -1;
     }
     gui.end_group_box();
     gui.end_grid();
@@ -313,7 +434,7 @@ void c_menu::render() {
                 menu_dragging = false;
         }
         menu_pos = ImLerp(menu_pos, menu_target,
-                          1.f - expf(-20.f * ImMin(io.DeltaTime, 0.05f)));
+                          1.f - expf(-36.f * ImMin(io.DeltaTime, 0.05f)));
         if (ImLengthSqr(menu_target - menu_pos) < 0.25f)
             menu_pos = menu_target;
         ImGui::SetNextWindowPos(menu_pos, ImGuiCond_Always);
