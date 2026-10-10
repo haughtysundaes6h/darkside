@@ -11,9 +11,12 @@
 // Stub for translation function
 inline const char* tr(const char* text) { return text; }
 
-// Stub for notification function
+// Stub for notification function - accepts both const char* and std::string
 inline void PushNotification(const char* title, const char* msg = "", int duration = 3000) {
     // Notification system disabled
+}
+inline void PushNotification(const char* title, const std::string& msg, int duration = 3000) {
+    PushNotification(title, msg.c_str(), duration);
 }
 
 using namespace ImGui;
