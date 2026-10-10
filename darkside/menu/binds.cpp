@@ -2,8 +2,19 @@
 #include "gui.hpp"
 #include "../sdk/includes/json/json.h"
 
-#define _HAS_STD_BYTE 0
+// gui.hpp ends with `using namespace std;`, so by the time the Windows headers are parsed here
+// std::byte is in scope and the `byte` typedef in rpcndr.h becomes ambiguous (C2872). Renaming
+// the Windows typedef for the duration of the include is what darkside.hpp and
+// imgui_widgets.cpp already do; keeping the include order means the min/max macros still arrive
+// after imgui and nlohmann/json have been parsed.
+#ifdef _WIN32
+#define byte win_byte_override
+#endif
 #include <Windows.h>
+#ifdef _WIN32
+#undef byte
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cmath>

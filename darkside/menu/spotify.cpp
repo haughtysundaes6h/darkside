@@ -5,7 +5,6 @@
 
 #include "spotify.hpp"
 
-#define _HAS_STD_BYTE 0
 #include <windows.h>
 #include <shellapi.h>
 #include <tlhelp32.h>

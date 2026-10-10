@@ -1,9 +1,6 @@
 #pragma once
 
 #include <memory>
-#ifndef _HAS_STD_BYTE
-#define _HAS_STD_BYTE 0
-#endif
 #include <Windows.h>
 #include <vector>
 

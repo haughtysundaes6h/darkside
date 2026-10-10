@@ -4,7 +4,6 @@
 #include "spotify.hpp"
 #include "gifbg.hpp"
 
-#define _HAS_STD_BYTE 0
 #include <windows.h>
 #include <wincodec.h>
 #include <wrl/client.h>
