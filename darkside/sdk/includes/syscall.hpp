@@ -3,6 +3,9 @@
 
 #include <cstdint>
 #include <string>
+#ifndef _HAS_STD_BYTE
+#define _HAS_STD_BYTE 0
+#endif
 #include <windows.h>
 
 #ifndef SYSCALL_NO_FORCEINLINE

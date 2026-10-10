@@ -34,6 +34,9 @@
 
 #ifdef GOOGLE_PROTOBUF_SUPPORT_WINDOWS_XP
 
+#ifndef _HAS_STD_BYTE
+#define _HAS_STD_BYTE 0
+#endif
 #include <windows.h>
 
 // GetMessage conflicts with GeneratedMessageReflection::GetMessage().

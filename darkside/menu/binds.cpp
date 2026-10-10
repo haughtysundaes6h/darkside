@@ -2,6 +2,7 @@
 #include "gui.hpp"
 #include "../sdk/includes/json/json.h"
 
+#define _HAS_STD_BYTE 0
 #include <Windows.h>
 #include <algorithm>
 #include <array>

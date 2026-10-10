@@ -1,5 +1,8 @@
 #pragma once
 #define WIN32_LEAN_AND_MEAN
+#ifndef _HAS_STD_BYTE
+#define _HAS_STD_BYTE 0
+#endif
 #include <Windows.h>
 #include <stdio.h>
 #include <stdarg.h>

@@ -32,6 +32,9 @@
     #error MinHook supports only x86 and x64 systems.
 #endif
 
+#ifndef _HAS_STD_BYTE
+#define _HAS_STD_BYTE 0
+#endif
 #include <windows.h>
 
 // MinHook Error Codes.
