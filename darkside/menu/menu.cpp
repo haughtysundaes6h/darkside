@@ -1,345 +1,239 @@
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "menu.hpp"
 #include "../darkside.hpp"
 #include "../sdk/config_system/config_system.hpp"
-#include "neverlose_style.hpp"
-
-#define IMGUI_DEFINE_MATH_OPERATORS
 #include "../sdk/includes/imgui/imgui_internal.h"
 
 void c_menu::init() {
-    apply_style();
+    // Инициализация GUI системы Neverlose
+    m_gui.apply_theme(0); // Dark theme
+    m_gui.apply_style_colors();
 }
 
-void c_menu::apply_style() {
-    neverlose_style::apply_style();
-}
-
-// Lerp helper
-static ImVec4 lerp_color(const ImVec4& a, const ImVec4& b, float t) {
-    return ImVec4(
-        a.x + (b.x - a.x) * t,
-        a.y + (b.y - a.y) * t,
-        a.z + (b.z - a.z) * t,
-        a.w + (b.w - a.w) * t
-    );
-}
-
-bool c_menu::tab_button(const char* label, int index, ImVec2 size) {
-    bool selected = (m_selected_tab == index);
+void c_menu::draw_tabs() {
+    // Используем tab систему из Neverlose GUI
+    const char* tab_icons[] = {
+        "R",   // Rage
+        "L",   // Legit
+        "A",   // Anti-Aim
+        "V",   // Visuals
+        "M",   // Misc
+        "S",   // Skins
+        "C"    // Config
+    };
     
-    // Smooth animation
-    float target = selected ? 1.f : 0.f;
-    m_tab_anim[index] += (target - m_tab_anim[index]) * ImGui::GetIO().DeltaTime * 8.f;
+    const char* tab_labels[] = {
+        "RAGE",
+        "LEGIT",
+        "ANTI-AIM",
+        "VISUALS",
+        "MISC",
+        "SKINS",
+        "CONFIG"
+    };
     
-    ImVec4 bg_color = lerp_color(bg_light, accent, m_tab_anim[index]);
-    ImVec4 text_color = lerp_color(text_dark, text, m_tab_anim[index]);
+    static int active_tab = 0;
     
-    ImGui::PushStyleColor(ImGuiCol_Button, bg_color);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, lerp_color(bg_color, accent, 0.3f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
-    ImGui::PushStyleColor(ImGuiCol_Text, text_color);
-    
-    bool clicked = ImGui::Button(label, size);
-    
-    ImGui::PopStyleColor(4);
-    
-    if (clicked) {
-        m_selected_tab = index;
-        m_selected_subtab = 0;
+    ImVec2 tab_pos = ImGui::GetCursorScreenPos();
+    for (int i = 0; i < 7; i++) {
+        bool selected = (active_tab == i);
+        if (m_gui.tab(tab_icons[i], tab_labels[i], selected)) {
+            active_tab = i;
+        }
     }
-    
-    return clicked;
 }
 
-void c_menu::begin_child_window(const char* id, ImVec2 size) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, bg_medium);
-    ImGui::PushStyleColor(ImGuiCol_Border, border);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.f);
-    ImGui::BeginChild(id, size, true);
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(2);
-}
-
-void c_menu::group_box(const char* title, std::function<void()> content) {
-    ImGui::BeginGroup();
-    
-    // Title
-    ImGui::PushStyleColor(ImGuiCol_Text, text_dark);
-    ImGui::Text("%s", title);
-    ImGui::PopStyleColor();
-    
-    ImGui::Spacing();
-    
-    // Content
-    ImGui::Indent(10.f);
-    content();
-    ImGui::Unindent(10.f);
-    
-    ImGui::EndGroup();
-    ImGui::Spacing();
-}
-
-void c_menu::tab_rage() {
-    ImGui::Columns(2, nullptr, false);
+void c_menu::draw_rage() {
+    m_gui.begin_grid(2);
     
     // Left column
-    begin_child_window("##rage_left", ImVec2(0, -1));
+    m_gui.grid_col(0);
     
-    group_box("GENERAL", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->rage_bot.m_enabled);
-        ImGui::Checkbox("Silent Aim", &g_cfg->rage_bot.m_silent);
-    });
+    m_gui.grid_box("GENERAL");
+    m_gui.row_checkbox("Enabled", &g_cfg->rage_bot.m_enabled);
+    m_gui.row_checkbox("Silent Aim", &g_cfg->rage_bot.m_silent);
+    m_gui.end_group_box();
     
-    group_box("HITBOXES", []() {
-        auto& cfg = g_cfg->rage_bot.m_weapon_config[0];
-        ImGui::Checkbox("Head", &cfg.m_hitboxes[0]);
-        ImGui::Checkbox("Chest", &cfg.m_hitboxes[1]);
-        ImGui::Checkbox("Stomach", &cfg.m_hitboxes[2]);
-        ImGui::Checkbox("Arms", &cfg.m_hitboxes[3]);
-        ImGui::Checkbox("Legs", &cfg.m_hitboxes[4]);
-    });
-    
-    group_box("ACCURACY", []() {
-        auto& cfg = g_cfg->rage_bot.m_weapon_config[0];
-        ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
-        ImGui::SliderInt("Min Damage", &cfg.m_minimum_damage, 0, 120);
-    });
-    
-    ImGui::EndChild();
-    
-    ImGui::NextColumn();
+    m_gui.grid_box("HITBOXES");
+    auto& cfg = g_cfg->rage_bot.m_weapon_config[0];
+    m_gui.row_checkbox("Head", &cfg.m_hitboxes[0]);
+    m_gui.row_checkbox("Chest", &cfg.m_hitboxes[1]);
+    m_gui.row_checkbox("Stomach", &cfg.m_hitboxes[2]);
+    m_gui.row_checkbox("Arms", &cfg.m_hitboxes[3]);
+    m_gui.row_checkbox("Legs", &cfg.m_hitboxes[4]);
+    m_gui.end_group_box();
     
     // Right column
-    begin_child_window("##rage_right", ImVec2(0, -1));
+    m_gui.grid_col(1);
     
-    group_box("MULTIPOINT", []() {
-        auto& cfg = g_cfg->rage_bot.m_weapon_config[0];
-        for (int i = 0; i < 5; i++) {
-            ImGui::PushID(i);
-            ImGui::Checkbox("Enable##mp", &cfg.m_multi_points[i]);
-            ImGui::SameLine();
-            ImGui::SliderInt("Scale", &cfg.m_hitbox_scale[i], 0, 100, "%d%%");
-            ImGui::PopID();
-        }
-    });
+    m_gui.grid_box("ACCURACY");
+    ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
+    ImGui::SliderInt("Min Damage", &cfg.m_minimum_damage, 0, 120);
+    m_gui.end_group_box();
     
-    group_box("BEHAVIOR", []() {
-        auto& cfg = g_cfg->rage_bot.m_weapon_config[0];
-        ImGui::Checkbox("Auto Fire", &cfg.m_auto_fire);
-        ImGui::Checkbox("Auto Stop", &cfg.m_auto_stop);
-        ImGui::Checkbox("Auto Scope", &cfg.m_auto_scope);
-    });
+    m_gui.grid_box("BEHAVIOR");
+    m_gui.row_checkbox("Auto Fire", &cfg.m_auto_fire);
+    m_gui.row_checkbox("Auto Stop", &cfg.m_auto_stop);
+    m_gui.row_checkbox("Auto Scope", &cfg.m_auto_scope);
+    m_gui.end_group_box();
     
-    ImGui::EndChild();
-    
-    ImGui::Columns(1);
+    m_gui.end_grid();
 }
 
-void c_menu::tab_legit() {
-    ImGui::Columns(2, nullptr, false);
+void c_menu::draw_legit() {
+    m_gui.begin_grid(2);
     
-    begin_child_window("##legit_left", ImVec2(0, -1));
+    m_gui.grid_col(0);
+    m_gui.grid_box("AIMBOT");
+    m_gui.row_checkbox("Enabled", &g_cfg->legit_bot.m_enabled);
+    ImGui::SliderFloat("FOV", &g_cfg->legit_bot.m_fov, 0.f, 180.f, "%.1f°");
+    ImGui::SliderFloat("Smooth", &g_cfg->legit_bot.m_smooth, 1.f, 20.f);
+    m_gui.end_group_box();
     
-    group_box("AIMBOT", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->legit_bot.m_enabled);
-        ImGui::SliderFloat("FOV", &g_cfg->legit_bot.m_fov, 0.f, 180.f, "%.1f°");
-        ImGui::SliderFloat("Smooth", &g_cfg->legit_bot.m_smooth, 1.f, 20.f, "%.1f");
-    });
+    m_gui.grid_col(1);
+    m_gui.grid_box("TRIGGERBOT");
+    m_gui.row_checkbox("Enabled", &g_cfg->legit_bot.m_triggerbot_enabled);
+    m_gui.end_group_box();
     
-    group_box("BACKTRACK", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->legit_bot.m_backtrack_enabled);
-        ImGui::SliderInt("Ticks", &g_cfg->legit_bot.m_backtrack_ticks, 0, 15);
-    });
+    m_gui.grid_box("BACKTRACK");
+    m_gui.row_checkbox("Enabled", &g_cfg->legit_bot.m_backtrack_enabled);
+    ImGui::SliderInt("Ticks", &g_cfg->legit_bot.m_backtrack_ticks, 0, 15);
+    m_gui.end_group_box();
     
-    ImGui::EndChild();
-    
-    ImGui::NextColumn();
-    
-    begin_child_window("##legit_right", ImVec2(0, -1));
-    
-    group_box("TRIGGERBOT", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->legit_bot.m_triggerbot_enabled);
-    });
-    
-    ImGui::EndChild();
-    
-    ImGui::Columns(1);
+    m_gui.end_grid();
 }
 
-void c_menu::tab_antiaim() {
-    ImGui::Columns(2, nullptr, false);
+void c_menu::draw_antiaim() {
+    m_gui.begin_grid(2);
     
-    begin_child_window("##aa_left", ImVec2(0, -1));
+    m_gui.grid_col(0);
     
-    group_box("PITCH", []() {
-        static const char* pitch_modes[] = {"Off", "Down", "Up", "Zero", "Custom"};
-        ImGui::Combo("Mode", &g_cfg->anti_hit.m_pitch_mode, pitch_modes, IM_ARRAYSIZE(pitch_modes));
-        if (g_cfg->anti_hit.m_pitch_mode == 4) {
-            ImGui::SliderInt("Amount", &g_cfg->anti_hit.m_pitch_amount, -89, 89);
-        }
-    });
+    m_gui.grid_box("PITCH");
+    static const char* pitch_modes[] = {"Off", "Down", "Up", "Zero", "Custom"};
+    ImGui::Combo("Mode", &g_cfg->anti_hit.m_pitch_mode, pitch_modes, IM_ARRAYSIZE(pitch_modes));
+    if (g_cfg->anti_hit.m_pitch_mode == 4) {
+        ImGui::SliderInt("Amount", &g_cfg->anti_hit.m_pitch_amount, -89, 89);
+    }
+    m_gui.end_group_box();
     
-    group_box("YAW", []() {
-        static const char* yaw_modes[] = {"Off", "Backward", "Sideways", "Spin", "At Target"};
-        ImGui::Combo("Mode", &g_cfg->anti_hit.m_yaw_mode, yaw_modes, IM_ARRAYSIZE(yaw_modes));
-        ImGui::SliderInt("Add", &g_cfg->anti_hit.m_yaw_amount, -180, 180);
-        ImGui::Checkbox("At Target", &g_cfg->anti_hit.m_at_target);
-    });
+    m_gui.grid_box("YAW");
+    static const char* yaw_modes[] = {"Off", "Backward", "Sideways", "Spin", "At Target"};
+    ImGui::Combo("Mode", &g_cfg->anti_hit.m_yaw_mode, yaw_modes, IM_ARRAYSIZE(yaw_modes));
+    ImGui::SliderInt("Add", &g_cfg->anti_hit.m_yaw_amount, -180, 180);
+    m_gui.row_checkbox("At Target", &g_cfg->anti_hit.m_at_target);
+    m_gui.end_group_box();
     
-    group_box("JITTER", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->anti_hit.m_jitter_enabled);
-        static const char* jitter_modes[] = {"Offset", "Center", "Random"};
-        ImGui::Combo("Mode", &g_cfg->anti_hit.m_jitter_mode, jitter_modes, IM_ARRAYSIZE(jitter_modes));
-        ImGui::SliderInt("Amount", &g_cfg->anti_hit.m_jitter_amount, 0, 180);
-    });
+    m_gui.grid_col(1);
     
-    ImGui::EndChild();
+    m_gui.grid_box("DESYNC");
+    m_gui.row_checkbox("Enabled", &g_cfg->anti_hit.m_desync_enabled);
+    static const char* desync_modes[] = {"Static", "Jitter", "Switch"};
+    ImGui::Combo("Mode", &g_cfg->anti_hit.m_desync_mode, desync_modes, IM_ARRAYSIZE(desync_modes));
+    ImGui::SliderInt("Left", &g_cfg->anti_hit.m_desync_left, 0, 60);
+    ImGui::SliderInt("Right", &g_cfg->anti_hit.m_desync_right, 0, 60);
+    m_gui.end_group_box();
     
-    ImGui::NextColumn();
+    m_gui.grid_box("FAKELAG");
+    m_gui.row_checkbox("Enabled", &g_cfg->anti_hit.m_fakelag_enabled);
+    static const char* fl_modes[] = {"Static", "Random", "Adaptive"};
+    ImGui::Combo("Mode", &g_cfg->anti_hit.m_fakelag_mode, fl_modes, IM_ARRAYSIZE(fl_modes));
+    ImGui::SliderInt("Limit", &g_cfg->anti_hit.m_fakelag_limit, 1, 15);
+    m_gui.end_group_box();
     
-    begin_child_window("##aa_right", ImVec2(0, -1));
-    
-    group_box("DESYNC", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->anti_hit.m_desync_enabled);
-        static const char* desync_modes[] = {"Static", "Jitter", "Switch"};
-        ImGui::Combo("Mode", &g_cfg->anti_hit.m_desync_mode, desync_modes, IM_ARRAYSIZE(desync_modes));
-        ImGui::SliderInt("Left Amount", &g_cfg->anti_hit.m_desync_left, 0, 60);
-        ImGui::SliderInt("Right Amount", &g_cfg->anti_hit.m_desync_right, 0, 60);
-    });
-    
-    group_box("FAKELAG", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->anti_hit.m_fakelag_enabled);
-        static const char* fl_modes[] = {"Static", "Random", "Adaptive"};
-        ImGui::Combo("Mode", &g_cfg->anti_hit.m_fakelag_mode, fl_modes, IM_ARRAYSIZE(fl_modes));
-        ImGui::SliderInt("Limit", &g_cfg->anti_hit.m_fakelag_limit, 1, 15);
-        ImGui::Checkbox("On Peek Only", &g_cfg->anti_hit.m_fakelag_on_peek);
-    });
-    
-    ImGui::EndChild();
-    
-    ImGui::Columns(1);
+    m_gui.end_grid();
 }
 
-void c_menu::tab_visuals() {
-    ImGui::Columns(2, nullptr, false);
+void c_menu::draw_visuals() {
+    m_gui.begin_grid(2);
     
-    begin_child_window("##vis_left", ImVec2(0, -1));
+    m_gui.grid_col(0);
+    m_gui.grid_box("PLAYER ESP");
+    m_gui.row_checkbox("Enabled", &g_cfg->visuals.m_player_esp.m_enabled);
+    m_gui.row_checkbox("Teammates", &g_cfg->visuals.m_player_esp.m_teammates);
+    m_gui.row_checkbox("Box", &g_cfg->visuals.m_player_esp.m_bounding_box);
+    m_gui.row_checkbox("Name", &g_cfg->visuals.m_player_esp.m_name);
+    m_gui.row_checkbox("Health", &g_cfg->visuals.m_player_esp.m_health_bar);
+    m_gui.row_checkbox("Weapon", &g_cfg->visuals.m_player_esp.m_weapon);
+    m_gui.row_checkbox("Skeleton", &g_cfg->visuals.m_player_esp.m_skeleton);
+    m_gui.end_group_box();
     
-    group_box("PLAYER ESP", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->visuals.m_player_esp.m_enabled);
-        ImGui::Checkbox("Teammates", &g_cfg->visuals.m_player_esp.m_teammates);
-        ImGui::Checkbox("Bounding Box", &g_cfg->visuals.m_player_esp.m_bounding_box);
-        ImGui::Checkbox("Name", &g_cfg->visuals.m_player_esp.m_name);
-        ImGui::Checkbox("Health Bar", &g_cfg->visuals.m_player_esp.m_health_bar);
-        ImGui::Checkbox("Weapon", &g_cfg->visuals.m_player_esp.m_weapon);
-        ImGui::Checkbox("Skeleton", &g_cfg->visuals.m_player_esp.m_skeleton);
-    });
+    m_gui.grid_col(1);
+    m_gui.grid_box("WORLD");
+    ImGui::SliderFloat("Exposure", &g_cfg->world.m_exposure, 0.f, 2.f, "%.2f");
+    ImGui::SliderFloat("Lighting", &g_cfg->world.m_lighting, 0.f, 1.f, "%.2f");
+    m_gui.row_checkbox("Remove Fog", &g_cfg->world.m_render_fog);
+    m_gui.end_group_box();
     
-    ImGui::EndChild();
+    m_gui.grid_box("THIRDPERSON");
+    m_gui.row_checkbox("Enabled", &g_cfg->world_esp.m_enable_thirdperson);
+    ImGui::SliderFloat("Distance", &g_cfg->world_esp.m_distance, 50.f, 300.f, "%.0f");
+    m_gui.end_group_box();
     
-    ImGui::NextColumn();
-    
-    begin_child_window("##vis_right", ImVec2(0, -1));
-    
-    group_box("WORLD", []() {
-        ImGui::SliderFloat("Exposure", &g_cfg->world.m_exposure, 0.f, 2.f, "%.2f");
-        ImGui::SliderFloat("Lighting", &g_cfg->world.m_lighting, 0.f, 1.f, "%.2f");
-        ImGui::Checkbox("Remove Fog", &g_cfg->world.m_render_fog);
-    });
-    
-    group_box("THIRDPERSON", []() {
-        ImGui::Checkbox("Enabled", &g_cfg->world_esp.m_enable_thirdperson);
-        ImGui::SliderFloat("Distance", &g_cfg->world_esp.m_distance, 50.f, 300.f, "%.0f");
-    });
-    
-    ImGui::EndChild();
-    
-    ImGui::Columns(1);
+    m_gui.end_grid();
 }
 
-void c_menu::tab_misc() {
-    ImGui::Columns(2, nullptr, false);
+void c_menu::draw_misc() {
+    m_gui.begin_grid(2);
     
-    begin_child_window("##misc_left", ImVec2(0, -1));
+    m_gui.grid_col(0);
+    m_gui.grid_box("MOVEMENT");
+    m_gui.row_checkbox("Bunny Hop", &g_cfg->misc.m_bunny_hop);
+    m_gui.row_checkbox("Auto Strafe", &g_cfg->misc.m_auto_strafe);
+    static const char* strafe_types[] = {"Legit", "Directional", "Rage"};
+    ImGui::Combo("Type", &g_cfg->misc.m_strafe_type, strafe_types, IM_ARRAYSIZE(strafe_types));
+    ImGui::SliderFloat("Smooth", &g_cfg->misc.m_strafe_smooth, 0.f, 100.f, "%.1f%%");
+    m_gui.end_group_box();
     
-    group_box("MOVEMENT", []() {
-        ImGui::Checkbox("Bunny Hop", &g_cfg->misc.m_bunny_hop);
-        ImGui::Checkbox("Auto Strafe", &g_cfg->misc.m_auto_strafe);
-        
-        static const char* strafe_types[] = {"Legit", "Directional", "Rage"};
-        ImGui::Combo("Type", &g_cfg->misc.m_strafe_type, strafe_types, IM_ARRAYSIZE(strafe_types));
-        ImGui::SliderFloat("Smooth", &g_cfg->misc.m_strafe_smooth, 0.f, 100.f, "%.1f%%");
-    });
+    m_gui.grid_col(1);
+    m_gui.grid_box("OTHER");
+    ImGui::Text("Miscellaneous settings");
+    m_gui.end_group_box();
     
-    ImGui::EndChild();
-    
-    ImGui::NextColumn();
-    
-    begin_child_window("##misc_right", ImVec2(0, -1));
-    
-    group_box("OTHER", []() {
-        ImGui::Text("Miscellaneous settings");
-    });
-    
-    ImGui::EndChild();
-    
-    ImGui::Columns(1);
+    m_gui.end_grid();
 }
 
-void c_menu::tab_skins() {
-    ImGui::Columns(2, nullptr, false);
+void c_menu::draw_skins() {
+    m_gui.begin_grid(2);
     
-    begin_child_window("##skins_left", ImVec2(0, -1));
+    m_gui.grid_col(0);
+    m_gui.grid_box("KNIFE");
+    ImGui::SliderInt("Model", &g_cfg->skins.m_knives.m_selected, 0, 20);
+    m_gui.end_group_box();
     
-    group_box("KNIFE", []() {
-        ImGui::SliderInt("Selected", &g_cfg->skins.m_knives.m_selected, 0, 20);
-    });
+    m_gui.grid_box("GLOVES");
+    ImGui::SliderInt("Model", &g_cfg->skins.m_gloves.m_selected, 0, 20);
+    m_gui.end_group_box();
     
-    group_box("GLOVES", []() {
-        ImGui::SliderInt("Selected", &g_cfg->skins.m_gloves.m_selected, 0, 20);
-    });
+    m_gui.grid_col(1);
+    m_gui.grid_box("AGENTS");
+    ImGui::SliderInt("CT Agent", &g_cfg->skins.m_agents.m_selected_ct, 0, 20);
+    ImGui::SliderInt("T Agent", &g_cfg->skins.m_agents.m_selected, 0, 20);
+    m_gui.end_group_box();
     
-    ImGui::EndChild();
-    
-    ImGui::NextColumn();
-    
-    begin_child_window("##skins_right", ImVec2(0, -1));
-    
-    group_box("AGENTS", []() {
-        ImGui::SliderInt("CT Agent", &g_cfg->skins.m_agents.m_selected_ct, 0, 20);
-        ImGui::SliderInt("T Agent", &g_cfg->skins.m_agents.m_selected, 0, 20);
-    });
-    
-    ImGui::EndChild();
-    
-    ImGui::Columns(1);
+    m_gui.end_grid();
 }
 
-void c_menu::tab_configs() {
+void c_menu::draw_configs() {
     static char config_name[64] = "";
     
-    ImGui::Columns(2, nullptr, false);
+    m_gui.begin_grid(2);
     
-    begin_child_window("##cfg_left", ImVec2(0, -1));
+    m_gui.grid_col(0);
+    m_gui.grid_box("CONFIGS");
     
-    ImGui::Text("CONFIG MANAGER");
-    ImGui::Separator();
-    ImGui::Spacing();
-    
-    // Config list
     g_config_system->refresh();
+    ImGui::BeginChild("##config_list", ImVec2(0, -100), true);
     for (const auto& cfg : g_config_system->config_files) {
         if (ImGui::Selectable(cfg.c_str())) {
             strncpy_s(config_name, cfg.c_str(), sizeof(config_name) - 1);
         }
     }
-    
     ImGui::EndChild();
     
-    ImGui::NextColumn();
+    m_gui.end_group_box();
     
-    begin_child_window("##cfg_right", ImVec2(0, -1));
+    m_gui.grid_col(1);
+    m_gui.grid_box("ACTIONS");
     
     ImGui::InputText("Name", config_name, sizeof(config_name));
     ImGui::Spacing();
@@ -372,84 +266,63 @@ void c_menu::tab_configs() {
     }
     
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    
-    if (ImGui::Button("Reset to Default", ImVec2(-1, 0))) {
+    if (ImGui::Button("Reset All", ImVec2(-1, 0))) {
         g_config_system->reset();
     }
     
-    ImGui::EndChild();
+    m_gui.end_group_box();
     
-    ImGui::Columns(1);
+    m_gui.end_grid();
 }
 
 void c_menu::render() {
     if (!m_opened)
         return;
     
-    // Smooth fade in/out
-    float target_alpha = m_opened ? 1.f : 0.f;
-    m_alpha += (target_alpha - m_alpha) * ImGui::GetIO().DeltaTime * 10.f;
+    // Применяем стиль Neverlose
+    m_gui.apply_style_colors();
     
-    if (m_alpha < 0.01f)
-        return;
+    ImGui::SetNextWindowSize(ImVec2(1000, 700), ImGuiCond_FirstUseEver);
     
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, m_alpha);
-    
-    ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(800, 500), ImVec2(FLT_MAX, FLT_MAX));
-    
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, bg_dark);
-    ImGui::PushStyleColor(ImGuiCol_Border, border);
-    
-    if (ImGui::Begin("DARKSIDE", &m_opened, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar)) {
-        ImVec2 window_size = ImGui::GetWindowSize();
+    if (ImGui::Begin("DARKSIDE##main", &m_opened, 
+        ImGuiWindowFlags_NoCollapse | 
+        ImGuiWindowFlags_NoScrollbar | 
+        ImGuiWindowFlags_NoResize)) {
         
         // Header
-        ImGui::PushStyleColor(ImGuiCol_Text, accent);
-        ImGui::Text("DARKSIDE");
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, text_dark);
-        ImGui::Text("| CS2 Premium");
-        ImGui::PopStyleColor();
+        ImVec2 window_pos = ImGui::GetWindowPos();
+        ImVec2 window_size = ImGui::GetWindowSize();
         
-        ImGui::Separator();
-        ImGui::Spacing();
+        // User profile (top right)
+        m_gui.user_profile(ImVec2(window_pos.x + window_size.x - 200, window_pos.y + 15), 
+                          ImVec2(window_pos.x + window_size.x - 15, window_pos.y + 50), nullptr);
         
-        // Tabs sidebar
+        // Sidebar with tabs
+        ImGui::SetCursorPos(ImVec2(20, 80));
         ImGui::BeginGroup();
         {
-            float tab_width = 120.f;
-            ImVec2 tab_size(tab_width, 35.f);
+            static int tab = 0;
             
-            tab_button("RAGE", 0, tab_size);
-            tab_button("LEGIT", 1, tab_size);
-            tab_button("ANTI-AIM", 2, tab_size);
-            tab_button("VISUALS", 3, tab_size);
-            tab_button("MISC", 4, tab_size);
-            tab_button("SKINS", 5, tab_size);
-            tab_button("CONFIGS", 6, tab_size);
-        }
-        ImGui::EndGroup();
-        
-        ImGui::SameLine();
-        
-        // Content area
-        ImGui::BeginGroup();
-        {
-            ImVec2 content_size(window_size.x - 150.f, window_size.y - 80.f);
-            ImGui::BeginChild("##content", content_size, false);
+            if (m_gui.tab("R", "RAGE", tab == 0, 0.f)) tab = 0;
+            if (m_gui.tab("L", "LEGIT", tab == 1, 0.f)) tab = 1;
+            if (m_gui.tab("A", "ANTI-AIM", tab == 2, 0.f)) tab = 2;
+            if (m_gui.tab("V", "VISUALS", tab == 3, 0.f)) tab = 3;
+            if (m_gui.tab("M", "MISC", tab == 4, 0.f)) tab = 4;
+            if (m_gui.tab("S", "SKINS", tab == 5, 0.f)) tab = 5;
+            if (m_gui.tab("C", "CONFIG", tab == 6, 0.f)) tab = 6;
             
-            switch (m_selected_tab) {
-                case 0: tab_rage(); break;
-                case 1: tab_legit(); break;
-                case 2: tab_antiaim(); break;
-                case 3: tab_visuals(); break;
-                case 4: tab_misc(); break;
-                case 5: tab_skins(); break;
-                case 6: tab_configs(); break;
+            // Content area
+            ImGui::SetCursorPos(ImVec2(180, 80));
+            ImGui::BeginChild("##content", ImVec2(window_size.x - 200, window_size.y - 100), false);
+            
+            switch (tab) {
+                case 0: draw_rage(); break;
+                case 1: draw_legit(); break;
+                case 2: draw_antiaim(); break;
+                case 3: draw_visuals(); break;
+                case 4: draw_misc(); break;
+                case 5: draw_skins(); break;
+                case 6: draw_configs(); break;
             }
             
             ImGui::EndChild();
@@ -458,7 +331,4 @@ void c_menu::render() {
         
         ImGui::End();
     }
-    
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
 }
