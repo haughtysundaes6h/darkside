@@ -175,7 +175,7 @@
     <ClCompile Include="hooks\hooks.cpp" />
     <ClCompile Include="math\math.cpp" />
     <ClCompile Include="menu\menu.cpp" />
-    <ClCompile Include="menu\gui_impl.cpp" />
+    <ClCompile Include="menu\gui.cpp" />
     <ClCompile Include="render\render.cpp" />
     <ClCompile Include="sdk\config_system\config_system.cpp" />
     <ClCompile Include="sdk\includes\imgui\imgui.cpp" />

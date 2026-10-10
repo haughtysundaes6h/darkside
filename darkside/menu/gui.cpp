@@ -1,12 +1,15 @@
 #include "gui.hpp"
 #include "hashes.hpp"
-#include "notification.hpp"
-#include "shader_bg.hpp"
-#include "spotify.hpp"
-#include "gifbg.hpp"
+// #include "notification.hpp"  // Disabled - not needed for basic functionality
+// #include "shader_bg.hpp"     // Disabled - not needed for basic functionality
+// #include "spotify.hpp"        // Disabled - not needed for basic functionality
+// #include "gifbg.hpp"          // Disabled - not needed for basic functionality
 #include <algorithm>
 #include <cstring>
 #include <math.h>
+
+// Stub for translation function
+inline const char* tr(const char* text) { return text; }
 
 using namespace ImGui;
 
