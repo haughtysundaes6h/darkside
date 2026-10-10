@@ -224,7 +224,7 @@ void c_gui::group_box( const char* name, ImVec2 size_arg, bool scrollable ) {
 
     // Title centred on its own ink inside the header strip, so the gap above and below it match.
     ImFont* header_font = ImGui::GetIO().Fonts->Fonts[is_popup ? 4 : 6];
-    ImU32 header_col = is_popup ? gui.text.to_im_color() : ImU32(GetColorU32( ImGuiCol_Text, 0.5f ));
+    ImU32 header_col = is_popup ? ImU32(gui.text.to_im_color()) : ImU32(GetColorU32( ImGuiCol_Text, 0.5f ));
     const char* header_text = tr( name );
     const float header_text_y = IM_ROUND( header_h * 0.5f - TextLineCenterY( header_font, header_font->FontSize ) );
     GetWindowDrawList( )->AddText( header_font, header_font->FontSize, pos + ImVec2( 10 * gui.m_scale, header_text_y - 3 ), header_col, header_text );
