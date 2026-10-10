@@ -4827,3 +4827,39 @@ int c_gui::search_bar( ImVec2 top_right ) {
     }
     return result;
 }
+
+// ============================================================================
+// Missing function implementations for text rendering
+// ============================================================================
+
+float TextLineCenterY(const ImFont* font, float font_size) {
+    // Returns the optical center of a line of text (cap band)
+    // This approximation works for most fonts
+    return font_size * 0.35f; // Approximate cap height center
+}
+
+float TextInkCenterY(const ImFont* font, float font_size, const char* text, const char* text_end) {
+    // Returns half-height of actual ink for centering on rendered pixels
+    ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text, text_end);
+    return text_size.y * 0.5f;
+}
+
+void RenderScrollingText(ImDrawList* draw, ImGuiID id, const ImRect& rect, const char* text,
+                        ImU32 color, bool hovered, ImFont* font, float font_size) {
+    // Simplified implementation - just clips text to rect without scrolling animation
+    if (!font) font = ImGui::GetFont();
+    if (font_size == 0.0f) font_size = ImGui::GetFontSize();
+    
+    ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text);
+    ImVec2 pos = rect.Min;
+    
+    // Center vertically
+    if (text_size.y < rect.GetHeight()) {
+        pos.y += (rect.GetHeight() - text_size.y) * 0.5f;
+    }
+    
+    // Clip to rect
+    draw->PushClipRect(rect.Min, rect.Max, true);
+    draw->AddText(font, font_size, pos, color, text);
+    draw->PopClipRect();
+}
