@@ -412,8 +412,8 @@ void c_menu::draw_rage() {
     gui.row_checkbox("Auto Scope", &cfg.m_auto_scope);
     gui.end_group_box();
     
-    // SHOOTING settings (second box)
-    gui.grid_box("SHOOTING", k_auto_height);
+    // AUTO-STOP settings
+    gui.grid_box("AUTO-STOP", k_auto_height);
     
     // Auto Stop with gear (modes multibox)
     bool auto_stop_modes[5] = { cfg.m_auto_stop_early, cfg.m_auto_stop_full, cfg.m_auto_stop_between, cfg.m_auto_stop_air, cfg.m_auto_stop_duck };
