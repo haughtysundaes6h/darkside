@@ -337,21 +337,6 @@ public:
     // Shows "None", "item1, item2, ..." or "All" based on selection.
     // labels: array of item names, values: array of bools, count: number of items
     bool row_multibox( const char* label, const char* const* items, bool* values, int count, const char* description = "Click to select multiple options." );
-    
-    // Multibox with gear icon on the LEFT of the label. Returns true while gear popup is open.
-    // Usage: if (row_multibox_geared("Label", items, values, count)) { ...popup content... row_geared_end(); }
-    bool row_multibox_geared( const char* label, const char* const* items, bool* values, int count, const char* description = "Click to select multiple options.", float popup_width = 216.f );
-    
-    // Checkbox with gear icon on the LEFT of the label. Returns true while gear popup is open.
-    // Usage: if (row_checkbox_geared("Label", &value)) { ...popup content... row_geared_end(); }
-    bool row_checkbox_geared( const char* label, bool* v, const char* description = "", float popup_width = 216.f );
-    
-    // Slider (int) with gear icon on the LEFT of the label. Returns true while gear popup is open.
-    // Supports Auto mode: when *v == -1, shows "Auto" text. Right-click toggles Auto.
-    bool row_slider_geared( const char* label, int* v, int min_val, int max_val, const char* format = "%d", bool auto_mode = false, const char* description = "", float popup_width = 216.f );
-    
-    // End gear popup (call after the content when row_*_geared returned true)
-    void row_geared_end();
 
     // Sub-menu row + its popup in one call - the row draws itself, clicking it opens the
     // card beside it: `if ( gui.row_popup( "Pitch" ) ) { ...content... gui.popup_end(); }`

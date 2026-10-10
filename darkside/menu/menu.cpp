@@ -402,12 +402,14 @@ void c_menu::draw_rage() {
     gui.grid_box("MAIN", k_auto_height);
     
     // Enable with gear (Hit Chance Seed, Extrapolate, Backtrack)
-    if (gui.row_checkbox_geared("Enable", &g_cfg->rage_bot.m_enabled)) {
+    gui.row_begin();
+    if (gui.row_options_begin("##enable_opts")) {
         gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
         gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
         gui.row_checkbox("Backtrack", &cfg.m_backtrack);
-        gui.row_geared_end();
+        gui.row_options_end();
     }
+    gui.row_checkbox("Enable", &g_cfg->rage_bot.m_enabled);
     
     gui.row_checkbox("Penetration", &cfg.m_penetration);
     gui.row_checkbox("Silent", &g_cfg->rage_bot.m_silent);
@@ -419,10 +421,12 @@ void c_menu::draw_rage() {
     
     // Auto Stop with gear for modes
     bool auto_stop_modes[5] = { cfg.m_auto_stop_early, cfg.m_auto_stop_full, cfg.m_auto_stop_between, cfg.m_auto_stop_air, cfg.m_auto_stop_duck };
-    if (gui.row_checkbox_geared("Auto Stop", &cfg.m_auto_stop)) {
+    gui.row_begin();
+    if (gui.row_options_begin("##autostop_opts")) {
         gui.row_multibox("Modes", auto_stop_names, auto_stop_modes, 5, "Select auto stop modes.");
-        gui.row_geared_end();
+        gui.row_options_end();
     }
+    gui.row_checkbox("Auto Stop", &cfg.m_auto_stop);
     cfg.m_auto_stop_early = auto_stop_modes[0];
     cfg.m_auto_stop_full = auto_stop_modes[1];
     cfg.m_auto_stop_between = auto_stop_modes[2];
@@ -439,21 +443,25 @@ void c_menu::draw_rage() {
     // Hitbox multibox (no gear)
     gui.row_multibox("Hitbox", hitbox_names, cfg.m_hitboxes, 6, "Select target hitboxes.");
     
-    // Multipoint with gear (Head Scale, Body Scale with Auto)
-    if (gui.row_multibox_geared("Multipoint", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.")) {
-        gui.row_slider_geared("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%", true, "Scale for head multipoint.");
-        gui.row_slider_geared("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%", true, "Scale for body multipoint.");
-        gui.row_geared_end();
+    // Multipoint with gear (Head Scale, Body Scale)
+    gui.row_begin();
+    if (gui.row_options_begin("##multipoint_opts")) {
+        gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
+        gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%");
+        gui.row_options_end();
     }
+    gui.row_multibox("Multipoint", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.");
     
-    // Hit Chance (with Auto via right-click)
-    gui.row_slider_geared("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%", true, "Minimum hit chance required.");
+    // Hit Chance slider
+    gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
     
     // Min Damage with gear (Delay Shot)
-    if (gui.row_slider_geared("Min Damage", &cfg.m_minimum_damage, 0, 120, "%d", true, "Minimum damage required.")) {
+    gui.row_begin();
+    if (gui.row_options_begin("##mindmg_opts")) {
         gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
-        gui.row_geared_end();
+        gui.row_options_end();
     }
+    gui.row_begin(); ImGui::SliderInt("Min Damage", &cfg.m_minimum_damage, 0, 120);
     gui.end_group_box();
 
     gui.end_grid();
