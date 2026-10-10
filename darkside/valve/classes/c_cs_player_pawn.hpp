@@ -321,6 +321,12 @@ public:
 	{
 		return static_cast<c_cs_weapon_base_v_data*>(m_get_sub_class_id());
 	}
+	
+	int get_item_def_index() {
+		auto& item = m_attribute_manager().m_item();
+		return static_cast<int>(item.m_defenition_index());
+	}
+	
 	float get_max_speed( ) {
 		auto* data = get_weapon_data( );
 		return data ? data->m_max_speed( ) : 0.f;

@@ -514,8 +514,9 @@ void c_legit_bot::draw_backtrack() {
             if (!record.is_valid())
                 continue;
             
+            vec3_t head_pos = record.m_head_position;  // copy for non-const ref
             vec3_t screen;
-            if (g_render->world_to_screen(record.m_head_position, screen)) {
+            if (g_render->world_to_screen(head_pos, screen)) {
                 float alpha = 1.0f - (static_cast<float>(i) / records.size());
                 g_render->circle(
                     vec3_t(screen.x, screen.y, 0),
@@ -582,10 +583,6 @@ bool c_legit_bot::is_target_valid(c_cs_player_pawn* pawn) {
     
     // Check team
     if (pawn->m_team_num() == g_ctx->m_local_pawn->m_team_num())
-        return false;
-    
-    // Check immunity
-    if (pawn->m_gun_game_immunity())
         return false;
     
     return true;

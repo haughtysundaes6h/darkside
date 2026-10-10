@@ -91,7 +91,7 @@ void c_visuals::store_players() {
         
         // State flags
         info.m_is_scoped = pawn->m_scoped();
-        info.m_is_flashed = pawn->m_flash_max_alpha() > 200.0f;
+        info.m_is_flashed = false;  // Flash detection not available in CS2 schema
         
         // Weapon info
         if (auto* weapon = pawn->get_active_weapon()) {
@@ -306,10 +306,12 @@ void c_visuals::draw_skeleton(const player_info_t& info) {
     c_color bone_color{1.f, 1.f, 1.f, 0.8f};
     
     for (const auto& [bone_from, bone_to] : info.m_bones) {
+        vec3_t from = bone_from;  // copy for non-const ref
+        vec3_t to = bone_to;      // copy for non-const ref
         vec3_t screen_from, screen_to;
         
-        if (g_render->world_to_screen(bone_from, screen_from) && 
-            g_render->world_to_screen(bone_to, screen_to)) {
+        if (g_render->world_to_screen(from, screen_from) && 
+            g_render->world_to_screen(to, screen_to)) {
             g_render->line(
                 {screen_from.x, screen_from.y},
                 {screen_to.x, screen_to.y},
@@ -467,9 +469,11 @@ void c_visuals::draw_bullet_tracers() {
     for (const auto& tracer : m_bullet_tracers) {
         float alpha = 1.0f - ((current_time - tracer.m_time) / duration);
         
+        vec3_t start = tracer.m_start;  // copy for non-const ref
+        vec3_t end = tracer.m_end;      // copy for non-const ref
         vec3_t screen_start, screen_end;
-        if (g_render->world_to_screen(tracer.m_start, screen_start) &&
-            g_render->world_to_screen(tracer.m_end, screen_end)) {
+        if (g_render->world_to_screen(start, screen_start) &&
+            g_render->world_to_screen(end, screen_end)) {
             
             c_color color = tracer.m_color;
             color.a() = alpha;
@@ -518,8 +522,9 @@ void c_visuals::draw_bullet_impacts() {
     for (const auto& impact : m_bullet_impacts) {
         float alpha = 1.0f - ((current_time - impact.m_time) / duration);
         
+        vec3_t pos = impact.m_position;  // copy for non-const ref
         vec3_t screen;
-        if (g_render->world_to_screen(impact.m_position, screen)) {
+        if (g_render->world_to_screen(pos, screen)) {
             g_render->circle(
                 {screen.x, screen.y, 0},
                 c_color{1.f, 0.f, 0.f, alpha},

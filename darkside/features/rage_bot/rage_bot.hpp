@@ -277,6 +277,27 @@ class c_rage_bot
 	void process_backtrack(lag_record_t* record);
 	bool can_shoot(c_cs_player_pawn* pawn, c_base_player_weapon* active_weapon);
 	void process_attack(c_user_cmd* user_cmd, vec3_t angle);
+	
+	// Get weapon config based on current weapon
+	c_config_system::weapon_config_t& get_current_weapon_config() {
+		if (!g_ctx->m_local_pawn)
+			return g_cfg->rage_bot.m_weapon_config[WEAPON_GROUP_GENERAL];
+		
+		auto* weapon = g_ctx->m_local_pawn->get_active_weapon();
+		if (!weapon)
+			return g_cfg->rage_bot.m_weapon_config[WEAPON_GROUP_GENERAL];
+		
+		auto* weapon_data = weapon->get_weapon_data();
+		if (!weapon_data)
+			return g_cfg->rage_bot.m_weapon_config[WEAPON_GROUP_GENERAL];
+		
+		int weapon_type = weapon_data->m_weapon_type();
+		int item_def = weapon->get_item_def_index();
+		
+		weapon_group_t group = c_config_system::get_weapon_group(weapon_type, item_def);
+		return g_cfg->rage_bot.get_weapon_config(static_cast<int>(group));
+	}
+	
 public:
 
 	void store_records();

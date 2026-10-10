@@ -103,3 +103,9 @@ void c_render::text( vec3_t txt_pos, c_color color, const int flags, const ImFon
 	m_background_draw_list->AddText( font, font_size, pos, color.im( ), begin, end );
 	m_background_draw_list->PopTextureID();
 }
+
+void c_render::circle( vec3_t center, c_color color, float radius, int segments ) {
+	if ( !m_background_draw_list || radius <= 0.f )
+		return;
+	m_background_draw_list->AddCircle( center.im( ), radius, color.im( ), segments );
+}

@@ -9,7 +9,8 @@ enum e_font_flags
 {
 	font_flags_center = 1 << 0,
 	font_flags_outline = 1 << 1,
-	font_flags_dropshadow = 1 << 2
+	font_flags_dropshadow = 1 << 2,
+	font_flags_right = 1 << 3
 };
 
 struct c_fonts
@@ -43,6 +44,8 @@ public:
 	void rect_outline( vec3_t start_pos, vec3_t end_pos, c_color color, float thickness = 1.f, float rounding = 0.0f );
 
 	void text( vec3_t txt_pos, c_color color, const int flags, const ImFont* font, const std::string_view& message, const int font_size );
+
+	void circle( vec3_t center, c_color color, float radius, int segments = 32 );
 };
 
 inline const auto g_render = std::make_unique<c_render>( );
