@@ -41,33 +41,30 @@ void load_config(const std::string& name) {
 void register_bind_targets() {
     auto& rage = g_cfg->rage_bot;
     menu_binds::register_bool("rage.enabled", "Enabled", &rage.m_enabled);
-    menu_binds::register_bool("rage.silent", "Silent Aim", &rage.m_silent);
+    menu_binds::register_bool("rage.silent", "Silent", &rage.m_silent);
     
     // Register binds for ALL weapon groups
     for (int g = 0; g < WEAPON_GROUP_MAX; ++g) {
         auto& weapon = rage.m_weapon_config[g];
         const std::string prefix = "rage." + std::string(weapon_group_names[g]) + ".";
         
-        menu_binds::register_bool((prefix + "auto_fire").c_str(), "Automatic Fire", &weapon.m_auto_fire);
-        menu_binds::register_bool((prefix + "auto_stop").c_str(), "Automatic Stop", &weapon.m_auto_stop);
-        menu_binds::register_bool((prefix + "auto_scope").c_str(), "Automatic Scope", &weapon.m_auto_scope);
+        menu_binds::register_bool((prefix + "auto_stop").c_str(), "Auto Stop", &weapon.m_auto_stop);
+        menu_binds::register_bool((prefix + "auto_scope").c_str(), "Auto Scope", &weapon.m_auto_scope);
+        menu_binds::register_bool((prefix + "penetration").c_str(), "Penetration", &weapon.m_penetration);
         menu_binds::register_bool((prefix + "delay_shot").c_str(), "Delay Shot", &weapon.m_delay_shot);
-        menu_binds::register_bool((prefix + "prefer_safe").c_str(), "Prefer Safe Point", &weapon.m_prefer_safe);
-        menu_binds::register_bool((prefix + "prefer_body").c_str(), "Prefer Body Aim", &weapon.m_prefer_body);
-        menu_binds::register_bool((prefix + "baim_lethal").c_str(), "Body Aim If Lethal", &weapon.m_prefer_baim_lethal);
-        menu_binds::register_bool((prefix + "static_scale").c_str(), "Static Point Scale", &weapon.m_static_scale);
+        menu_binds::register_bool((prefix + "extrapolate").c_str(), "Extrapolate", &weapon.m_extrapolate);
         
-        for (int i = 0; i < 6; ++i) {
-            static const char* hitbox_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+        for (int i = 0; i < 7; ++i) {
+            static const char* hitbox_names[] = { "Auto", "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
             menu_binds::register_bool((prefix + "hitbox." + std::to_string(i)).c_str(), hitbox_names[i], &weapon.m_hitboxes[i]);
             menu_binds::register_bool((prefix + "multipoint." + std::to_string(i)).c_str(), hitbox_names[i], &weapon.m_multi_points[i]);
         }
         
         menu_binds::register_int((prefix + "hit_chance").c_str(), "Hit Chance", &weapon.m_hit_chance, 0, 100);
-        menu_binds::register_int((prefix + "minimum_damage").c_str(), "Minimum Damage", &weapon.m_minimum_damage, 0, 120);
-        menu_binds::register_int((prefix + "head_scale").c_str(), "Head Scale", &weapon.m_hitbox_scale[0], 0, 100);
-        menu_binds::register_int((prefix + "body_scale").c_str(), "Body Scale", &weapon.m_hitbox_scale[1], 0, 100);
-        menu_binds::register_int((prefix + "baim_after").c_str(), "BAIM After Misses", &weapon.m_baim_after_x_shots, 0, 10);
+        menu_binds::register_int((prefix + "hit_chance_seed").c_str(), "Hit Chance Seed", &weapon.m_hit_chance_seed, 0, 256);
+        menu_binds::register_int((prefix + "minimum_damage").c_str(), "Min Damage", &weapon.m_minimum_damage, 0, 120);
+        menu_binds::register_int((prefix + "head_scale").c_str(), "Head Scale", &weapon.m_head_scale, 0, 100);
+        menu_binds::register_int((prefix + "body_scale").c_str(), "Body Scale", &weapon.m_body_scale, 0, 100);
     }
 
     auto& legit = g_cfg->legit_bot;
@@ -262,13 +259,16 @@ void draw_top_bar(ImGuiWindow* window, int current_tab) {
         draw->AddText(groups_pos + ImVec2(groups_w - arrow2_size.x - 10.f, (30.f - arrow2_size.y) * 0.5f),
                       gui.text_disabled.to_im_color(), ICON_FA_CHEVRON_DOWN);
         
-        // Weapon groups popup
+        // Weapon groups popup - use higher z-order
         bool groups_open = false;
         const float groups_anim = gui.popup_animation("##weapon_groups_dropdown", groups_clicked, groups_open);
         const ImVec2 groups_anchor(groups_pos.x, groups_pos.y + 36.f * s);
         
         if (gui.begin_popup_card_at("##weapon_groups_dropdown", groups_open, groups_anim,
                                     groups_anchor, ImVec2(0.f, 0.f), 220.f)) {
+            // Bring popup to front
+            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+            
             ImGui::PushFont(ImGui::GetIO().Fonts->Fonts.Size > 4 ? ImGui::GetIO().Fonts->Fonts[4] : ImGui::GetFont());
             ImGui::TextUnformatted(gui.tr("Weapon Groups"));
             ImGui::PopFont();
@@ -384,13 +384,13 @@ void c_menu::draw() {
 }
 
 void c_menu::draw_rage() {
-    // Hitbox names for multibox
-    static const char* hitbox_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
-    static const char* multipoint_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+    // Names for multiboxes (with Auto as first option)
+    static const char* hitbox_names[] = { "Auto", "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+    static const char* multipoint_names[] = { "Auto", "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+    static const char* auto_stop_names[] = { "Early", "Full Stop", "Between Shots", "Air", "Duck" };
     
     // Get current weapon config
     auto& cfg = g_cfg->rage_bot.m_weapon_config[g_cfg->rage_bot.m_selected_group];
-    const bool is_override = g_cfg->rage_bot.m_selected_group != WEAPON_GROUP_GENERAL;
     
     gui.begin_grid(2);
 
@@ -399,63 +399,59 @@ void c_menu::draw_rage() {
     
     // MAIN settings
     gui.grid_box("MAIN", k_auto_height);
-    gui.row_checkbox("Enabled", &g_cfg->rage_bot.m_enabled);
-    gui.row_checkbox("Silent Aim", &g_cfg->rage_bot.m_silent);
     
-    // Show current weapon group
-    if (is_override) {
-        gui.row_begin();
-        ImGui::TextColored(gui.accent_color.to_vec4(1.f, false), "%s %s", 
-            ICON_FA_CROSSHAIRS, weapon_group_names[g_cfg->rage_bot.m_selected_group]);
+    // Enable with gear (hit chance seed, extrapolate)
+    if (gui.row_checkbox_with_gear("Enable", &g_cfg->rage_bot.m_enabled)) {
+        gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
+        gui.row_checkbox("Extrapolate", &cfg.m_extrapolate);
+        gui.row_checkbox_gear_end();
     }
+    
+    gui.row_checkbox("Penetration", &cfg.m_penetration);
+    gui.row_checkbox("Silent", &g_cfg->rage_bot.m_silent);
+    gui.row_checkbox("Auto Scope", &cfg.m_auto_scope);
     gui.end_group_box();
     
-    // HITBOXES multibox
-    gui.grid_box("HITBOXES", k_auto_height);
-    gui.row_multibox("Target", hitbox_names, cfg.m_hitboxes, 6, "Select which body parts to target.");
-    gui.end_group_box();
+    // SHOOTING settings (second box)
+    gui.grid_box("SHOOTING", k_auto_height);
     
-    // MULTIPOINTS
-    gui.grid_box("MULTIPOINTS", k_auto_height);
-    if (gui.row_multibox_with_gear("Points", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.")) {
-        // Gear popup content - scale sliders
-        ImGui::SliderInt("Head Scale", &cfg.m_hitbox_scale[0], 0, 100, "%d%%");
-        ImGui::SliderInt("Body Scale", &cfg.m_hitbox_scale[1], 0, 100, "%d%%");
-        gui.row_multibox_gear_end();
+    // Auto Stop with gear (modes multibox)
+    bool auto_stop_modes[5] = { cfg.m_auto_stop_early, cfg.m_auto_stop_full, cfg.m_auto_stop_between, cfg.m_auto_stop_air, cfg.m_auto_stop_duck };
+    if (gui.row_checkbox_with_gear("Auto Stop", &cfg.m_auto_stop)) {
+        gui.row_multibox("Modes", auto_stop_names, auto_stop_modes, 5, "Select auto stop modes.");
+        cfg.m_auto_stop_early = auto_stop_modes[0];
+        cfg.m_auto_stop_full = auto_stop_modes[1];
+        cfg.m_auto_stop_between = auto_stop_modes[2];
+        cfg.m_auto_stop_air = auto_stop_modes[3];
+        cfg.m_auto_stop_duck = auto_stop_modes[4];
+        gui.row_checkbox_gear_end();
     }
-    gui.row_checkbox("Static Point Scale", &cfg.m_static_scale);
     gui.end_group_box();
 
     // ========== RIGHT COLUMN ==========
     gui.grid_col(1);
     
-    // ACCURACY settings
-    gui.grid_box("ACCURACY", k_auto_height);
+    // SETTINGS
+    gui.grid_box("SETTINGS", k_auto_height);
+    
+    // Hitbox multibox
+    gui.row_multibox("Hitbox", hitbox_names, cfg.m_hitboxes, 7, "Select target hitboxes.");
+    
+    // Multipoint with gear (head/body scale)
+    if (gui.row_multibox_with_gear("Multipoint", multipoint_names, cfg.m_multi_points, 7, "Select multipoint locations.")) {
+        gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
+        gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%");
+        gui.row_multibox_gear_end();
+    }
+    
+    // Hit Chance
     gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
-    gui.row_begin(); ImGui::SliderInt("Minimum Damage", &cfg.m_minimum_damage, 0, 120);
-    gui.end_group_box();
     
-    // BEHAVIOR settings
-    gui.grid_box("BEHAVIOR", k_auto_height);
-    gui.row_checkbox("Automatic Fire", &cfg.m_auto_fire);
-    gui.row_checkbox("Automatic Stop", &cfg.m_auto_stop);
-    
-    // Auto stop mode selector
-    draw_animated_row("##auto_stop_mode", cfg.m_auto_stop, [&cfg] {
-        static const char* stop_modes[] = { "Full", "Minimal", "Between Shots" };
-        ImGui::Combo("Stop Mode", &cfg.m_auto_stop_mode, stop_modes, IM_ARRAYSIZE(stop_modes));
-    });
-    
-    gui.row_checkbox("Automatic Scope", &cfg.m_auto_scope);
-    gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
-    gui.end_group_box();
-    
-    // SAFETY settings
-    gui.grid_box("SAFETY", k_auto_height);
-    gui.row_checkbox("Prefer Safe Point", &cfg.m_prefer_safe);
-    gui.row_checkbox("Prefer Body Aim", &cfg.m_prefer_body);
-    gui.row_checkbox("Body Aim If Lethal", &cfg.m_prefer_baim_lethal);
-    gui.row_begin(); ImGui::SliderInt("BAIM After Misses", &cfg.m_baim_after_x_shots, 0, 10);
+    // Min Damage with gear (delay shot) and Auto option
+    if (gui.row_slider_with_gear("Min Damage", &cfg.m_minimum_damage, 0, 120, cfg.m_minimum_damage_auto, "Auto")) {
+        gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
+        gui.row_slider_gear_end();
+    }
     gui.end_group_box();
 
     gui.end_grid();

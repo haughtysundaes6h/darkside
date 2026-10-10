@@ -342,6 +342,17 @@ public:
     // Returns true when the gear popup is open (call your additional UI inside the if block, then call row_multibox_gear_end)
     bool row_multibox_with_gear( const char* label, const char* const* items, bool* values, int count, const char* description = "Click to select multiple options." );
     void row_multibox_gear_end();
+    
+    // Checkbox with a gear icon that opens additional settings popup
+    // Returns true when the gear popup is open
+    bool row_checkbox_with_gear( const char* label, bool* v, const char* description = "" );
+    void row_checkbox_gear_end();
+    
+    // Slider with a gear icon and optional "Auto" toggle
+    // Returns true when the gear popup is open
+    // has_auto: if true, shows "Auto" text when auto_enabled is true
+    bool row_slider_with_gear( const char* label, int* v, int min_val, int max_val, bool& auto_enabled, const char* auto_text = "Auto", const char* description = "" );
+    void row_slider_gear_end();
 
     // Sub-menu row + its popup in one call - the row draws itself, clicking it opens the
     // card beside it: `if ( gui.row_popup( "Pitch" ) ) { ...content... gui.popup_end(); }`

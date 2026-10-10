@@ -86,30 +86,31 @@ public:
         bool m_enabled = true;
         bool m_override_general = false;  // Использовать свои настройки вместо General
         
-        // Hitboxes
-        bool m_hitboxes[6] = {true, true, true, false, false, false};
-        bool m_multi_points[6] = {true, true, true, false, false, false};
-        int m_hitbox_scale[6] = {50, 50, 50, 50, 50, 50};
-        bool m_static_scale = true;
+        // Hitboxes (7 options: Auto + 6 body parts)
+        bool m_hitboxes[7] = {false, true, true, true, false, false, false};  // Auto, Head, Chest, Stomach, Arms, Legs, Feet
+        bool m_multi_points[7] = {false, true, true, true, false, false, false};  // Auto, Head, Chest, Stomach, Arms, Legs, Feet
+        int m_head_scale = 50;
+        int m_body_scale = 50;
         
         // Accuracy
         int m_hit_chance = 60;
-        int m_minimum_damage = 20;
-        int m_minimum_damage_override = 1;
-        int m_minimum_damage_auto = 0;  // HP+X
-        
-        // Behavior
-        bool m_auto_fire = true;
-        bool m_auto_stop = true;
-        int m_auto_stop_mode = 0;  // 0=full, 1=minimal, 2=between shots
-        bool m_auto_scope = true;
+        int m_hit_chance_seed = 0;  // 0-256
+        bool m_extrapolate = false;
+        int m_minimum_damage = 20;  // Can be "Auto" (use m_minimum_damage_auto flag)
+        bool m_minimum_damage_auto = false;
         bool m_delay_shot = false;
         
-        // Safety
-        bool m_prefer_safe = false;
-        bool m_prefer_body = false;
-        bool m_prefer_baim_lethal = false;  // BAIM если убьёт
-        int m_baim_after_x_shots = 0;  // BAIM после X мисов
+        // Auto Stop (multibox - can select multiple)
+        bool m_auto_stop = false;
+        bool m_auto_stop_early = false;
+        bool m_auto_stop_full = true;
+        bool m_auto_stop_between = false;
+        bool m_auto_stop_air = false;
+        bool m_auto_stop_duck = false;
+        
+        // Other
+        bool m_auto_scope = false;
+        bool m_penetration = false;
     };
     
     struct rage_bot_t {

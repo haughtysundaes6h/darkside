@@ -1466,6 +1466,229 @@ void c_gui::row_multibox_gear_end() {
     end_popup_card();
 }
 
+bool c_gui::row_checkbox_with_gear( const char* label, bool* v, const char* description ) {
+    row_begin();
+    
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) { search_note(label); return false; }
+
+    ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(label);
+    const float s = m_scale;
+    
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos = window->DC.CursorPos;
+    float row_h = ImMax(19.f * s, ImGui::GetFontSize()) + style.FramePadding.y * 2.f;
+    ImVec2 size(w, row_h);
+    ImRect total_bb(pos, pos + size);
+    const float flash = search_note(label);
+    
+    ImGui::ItemSize(total_bb, style.FramePadding.y);
+    if (!ImGui::ItemAdd(total_bb, id))
+        return false;
+    
+    ImDrawList* draw = window->DrawList;
+    
+    // Gear icon on the far left
+    const float gear_size = 16.f * s;
+    ImVec2 gear_pos(total_bb.Min.x, total_bb.GetCenter().y - gear_size / 2.f);
+    ImRect gear_bb(gear_pos, gear_pos + ImVec2(gear_size, gear_size));
+    
+    const ImGuiID gear_id = window->GetID("##gear");
+    bool gear_hovered = ImGui::IsMouseHoveringRect(gear_bb.Min, gear_bb.Max);
+    bool gear_clicked = gear_hovered && ImGui::IsMouseClicked(0);
+    
+    // Gear animation
+    static std::unordered_map<ImGuiID, float> gear_anims;
+    float& gear_anim = gear_anims[gear_id];
+    gear_anim = ImLerp(gear_anim, gear_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
+    
+    // Draw gear icon
+    const char* gear_icon = ICON_FA_COG;
+    ImVec2 gear_icon_size = ImGui::CalcTextSize(gear_icon);
+    ImU32 gear_col = cfg_mix(text_disabled.to_vec4(1.f, false), accent_color.to_vec4(1.f, false), gear_anim);
+    draw->AddText(ImVec2(gear_bb.GetCenter().x - gear_icon_size.x / 2.f, gear_bb.GetCenter().y - gear_icon_size.y / 2.f),
+        gear_col, gear_icon);
+    
+    // Label after gear
+    const char* shown_label = tr(label);
+    ImVec4 label_col = text_disabled.to_vec4(1.f, false);
+    label_col = ImLerp(label_col, accent_color.to_vec4(1.f, false), flash);
+    draw->AddText(ImVec2(gear_bb.Max.x + 8.f * s, IM_ROUND(total_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
+        ImGui::GetColorU32(label_col), shown_label);
+    
+    // Switch/checkbox on the right
+    const ImVec2 sw_size(switch_w(), switch_h());
+    ImVec2 sw_pos(total_bb.Max.x - sw_size.x - 4.f * s, total_bb.GetCenter().y - sw_size.y / 2.f);
+    ImRect sw_bb(sw_pos, sw_pos + sw_size);
+    
+    bool sw_hovered = ImGui::IsMouseHoveringRect(sw_bb.Min, sw_bb.Max);
+    if (sw_hovered && ImGui::IsMouseClicked(0))
+        *v = !*v;
+    
+    static std::unordered_map<ImGuiID, float> sw_anims;
+    float& sw_anim = sw_anims[id];
+    sw_anim = ImLerp(sw_anim, *v ? 1.f : 0.f, g.IO.DeltaTime * 12.f);
+    draw_switch_body(draw, sw_bb, sw_anim);
+    
+    info_tooltip(label, description);
+    
+    // Gear popup
+    const std::string gear_popup_name = std::string(label) + "##chk_gear_popup";
+    bool gear_wants_open = false;
+    const float gear_popup_anim = popup_animation(gear_popup_name.c_str(), gear_clicked, gear_wants_open);
+    const ImVec2 gear_click_pos = popup_click_pos(gear_popup_name.c_str(), gear_clicked, ImVec2(gear_bb.Max.x + 4.f * s, gear_bb.GetCenter().y));
+    
+    if (begin_popup_card_at(gear_popup_name.c_str(), gear_wants_open, gear_popup_anim, gear_click_pos, ImVec2(0.f, 0.5f), 180.f)) {
+        return true;
+    }
+    return false;
+}
+
+void c_gui::row_checkbox_gear_end() {
+    end_popup_card();
+}
+
+bool c_gui::row_slider_with_gear( const char* label, int* v, int min_val, int max_val, bool& auto_enabled, const char* auto_text, const char* description ) {
+    row_begin();
+    
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) { search_note(label); return false; }
+
+    ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(label);
+    const float s = m_scale;
+    
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos = window->DC.CursorPos;
+    float row_h = ImMax(19.f * s, ImGui::GetFontSize()) + style.FramePadding.y * 2.f;
+    ImVec2 size(w, row_h);
+    ImRect total_bb(pos, pos + size);
+    const float flash = search_note(label);
+    
+    ImGui::ItemSize(total_bb, style.FramePadding.y);
+    if (!ImGui::ItemAdd(total_bb, id))
+        return false;
+    
+    ImDrawList* draw = window->DrawList;
+    
+    // Gear icon on the far left
+    const float gear_size = 16.f * s;
+    ImVec2 gear_pos(total_bb.Min.x, total_bb.GetCenter().y - gear_size / 2.f);
+    ImRect gear_bb(gear_pos, gear_pos + ImVec2(gear_size, gear_size));
+    
+    const ImGuiID gear_id = window->GetID("##gear");
+    bool gear_hovered = ImGui::IsMouseHoveringRect(gear_bb.Min, gear_bb.Max);
+    bool gear_clicked = gear_hovered && ImGui::IsMouseClicked(0);
+    
+    // Gear animation
+    static std::unordered_map<ImGuiID, float> gear_anims;
+    float& gear_anim = gear_anims[gear_id];
+    gear_anim = ImLerp(gear_anim, gear_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
+    
+    // Draw gear icon
+    const char* gear_icon = ICON_FA_COG;
+    ImVec2 gear_icon_size = ImGui::CalcTextSize(gear_icon);
+    ImU32 gear_col = cfg_mix(text_disabled.to_vec4(1.f, false), accent_color.to_vec4(1.f, false), gear_anim);
+    draw->AddText(ImVec2(gear_bb.GetCenter().x - gear_icon_size.x / 2.f, gear_bb.GetCenter().y - gear_icon_size.y / 2.f),
+        gear_col, gear_icon);
+    
+    // Label after gear
+    const char* shown_label = tr(label);
+    ImVec4 label_col = text_disabled.to_vec4(1.f, false);
+    label_col = ImLerp(label_col, accent_color.to_vec4(1.f, false), flash);
+    draw->AddText(ImVec2(gear_bb.Max.x + 8.f * s, IM_ROUND(total_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
+        ImGui::GetColorU32(label_col), shown_label);
+    
+    // Auto toggle button (small pill)
+    const float auto_w = 40.f * s;
+    const float auto_h = 18.f * s;
+    ImVec2 auto_pos(total_bb.Max.x - 130.f * s - auto_w - 8.f * s, total_bb.GetCenter().y - auto_h / 2.f);
+    ImRect auto_bb(auto_pos, auto_pos + ImVec2(auto_w, auto_h));
+    
+    bool auto_hovered = ImGui::IsMouseHoveringRect(auto_bb.Min, auto_bb.Max);
+    if (auto_hovered && ImGui::IsMouseClicked(0))
+        auto_enabled = !auto_enabled;
+    
+    static std::unordered_map<ImGuiID, float> auto_anims;
+    float& auto_anim = auto_anims[ImGui::GetID("##auto")];
+    auto_anim = ImLerp(auto_anim, auto_enabled ? 1.f : (auto_hovered ? 0.3f : 0.f), g.IO.DeltaTime * 12.f);
+    
+    draw->AddRectFilled(auto_bb.Min, auto_bb.Max, 
+        auto_enabled ? accent_color.to_im_color(0.8f) : frame_inactive.to_im_color(0.6f + 0.2f * auto_anim), 4.f * s);
+    
+    ImVec2 auto_text_size = ImGui::CalcTextSize(auto_text);
+    draw->AddText(ImVec2(auto_bb.GetCenter().x - auto_text_size.x / 2.f, auto_bb.GetCenter().y - auto_text_size.y / 2.f),
+        auto_enabled ? IM_COL32(255, 255, 255, 255) : text_disabled.to_im_color(), auto_text);
+    
+    // Slider on the right (narrower to fit auto button)
+    const float slider_w = 130.f * s;
+    const float slider_h = 18.f * s;
+    ImVec2 slider_pos(total_bb.Max.x - slider_w, total_bb.GetCenter().y - slider_h / 2.f);
+    ImRect slider_bb(slider_pos, slider_pos + ImVec2(slider_w, slider_h));
+    
+    if (!auto_enabled) {
+        // Draw slider background
+        draw->AddRectFilled(slider_bb.Min, slider_bb.Max, field_bg.to_im_color(0.8f), 4.f * s);
+        
+        // Slider interaction
+        bool slider_hovered = ImGui::IsMouseHoveringRect(slider_bb.Min, slider_bb.Max);
+        static bool dragging = false;
+        static ImGuiID drag_id = 0;
+        
+        if (slider_hovered && ImGui::IsMouseClicked(0)) {
+            dragging = true;
+            drag_id = id;
+        }
+        if (!ImGui::IsMouseDown(0)) {
+            dragging = false;
+            drag_id = 0;
+        }
+        
+        if (dragging && drag_id == id) {
+            float t = ImClamp((g.IO.MousePos.x - slider_bb.Min.x) / slider_bb.GetWidth(), 0.f, 1.f);
+            *v = min_val + (int)(t * (max_val - min_val));
+        }
+        
+        // Draw filled portion
+        float fill_t = (float)(*v - min_val) / (float)(max_val - min_val);
+        draw->AddRectFilled(slider_bb.Min, ImVec2(slider_bb.Min.x + slider_bb.GetWidth() * fill_t, slider_bb.Max.y),
+            accent_color.to_im_color(0.7f), 4.f * s);
+        
+        // Value text
+        char val_buf[16];
+        snprintf(val_buf, sizeof(val_buf), "%d", *v);
+        ImVec2 val_size = ImGui::CalcTextSize(val_buf);
+        draw->AddText(ImVec2(slider_bb.GetCenter().x - val_size.x / 2.f, slider_bb.GetCenter().y - val_size.y / 2.f),
+            text.to_im_color(), val_buf);
+    } else {
+        // Show "Auto" text in slider area
+        draw->AddRectFilled(slider_bb.Min, slider_bb.Max, accent_color.to_im_color(0.15f), 4.f * s);
+        ImVec2 auto_label_size = ImGui::CalcTextSize(auto_text);
+        draw->AddText(ImVec2(slider_bb.GetCenter().x - auto_label_size.x / 2.f, slider_bb.GetCenter().y - auto_label_size.y / 2.f),
+            accent_color.to_im_color(), auto_text);
+    }
+    
+    info_tooltip(label, description);
+    
+    // Gear popup
+    const std::string gear_popup_name = std::string(label) + "##slider_gear_popup";
+    bool gear_wants_open = false;
+    const float gear_popup_anim = popup_animation(gear_popup_name.c_str(), gear_clicked, gear_wants_open);
+    const ImVec2 gear_click_pos = popup_click_pos(gear_popup_name.c_str(), gear_clicked, ImVec2(gear_bb.Max.x + 4.f * s, gear_bb.GetCenter().y));
+    
+    if (begin_popup_card_at(gear_popup_name.c_str(), gear_wants_open, gear_popup_anim, gear_click_pos, ImVec2(0.f, 0.5f), 180.f)) {
+        return true;
+    }
+    return false;
+}
+
+void c_gui::row_slider_gear_end() {
+    end_popup_card();
+}
+
 // Segmented icon bar (the Players tab's header): the active segment opens up to show its label,
 // the others stay icon-only, and the widths ease between the two. Right-aligned on `top_right`.
 // `trailing_icon` is an extra button of its own on the end; true on the frame it is clicked.
