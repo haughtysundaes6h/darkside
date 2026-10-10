@@ -459,8 +459,9 @@ bool bind_mode_row(bind_entry& entry) {
     bool changed = false;
 
     for (int i = 0; i < 2; ++i) {
-        const ImVec2 min(right - (seg_w + gap) * (2 - i) + gap, top);
-        const ImRect bb(min, min + ImVec2(seg_w, seg_h));
+        // Not `min`: Windows.h defines that as a macro and the project does not set NOMINMAX.
+        const ImVec2 seg_pos(right - (seg_w + gap) * (2 - i) + gap, top);
+        const ImRect bb(seg_pos, seg_pos + ImVec2(seg_w, seg_h));
         const bool hovered = ImGui::IsMouseHoveringRect(bb.Min, bb.Max, true);
         if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && entry.mode != modes[i]) {
             entry.mode = modes[i];
@@ -504,8 +505,9 @@ bool bind_value_row(const bind_target& target, bind_entry& entry) {
                   gui.text.to_im_color(1.f, false), gui.tr("Value"));
 
     const ImVec2 sz(gui.switch_w(), gui.switch_h());
-    const ImVec2 min(pos.x + w - 6.f * s - sz.x, IM_ROUND(cy - sz.y * 0.5f));
-    const ImRect bb(min, min + sz);
+    // Not `min`: Windows.h defines that as a macro and the project does not set NOMINMAX.
+    const ImVec2 sw_pos(pos.x + w - 6.f * s - sz.x, IM_ROUND(cy - sz.y * 0.5f));
+    const ImRect bb(sw_pos, sw_pos + sz);
     bool changed = false;
     if (ImGui::IsMouseHoveringRect(bb.Min, bb.Max, true) && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         entry.bool_value = !entry.bool_value;
