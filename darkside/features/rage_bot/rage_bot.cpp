@@ -67,7 +67,10 @@ void c_rage_bot::store_records()
 
 void c_rage_bot::store_hitboxes()
 {
-	const bool* enabled = g_cfg->rage_bot.m_hitboxes;
+	// Get current weapon config
+	auto& weapon_cfg = get_current_weapon_config();
+	const bool* enabled = weapon_cfg.m_hitboxes;
+	
 	if (enabled[0])
 		m_hitboxes.emplace_back(HITBOX_HEAD);
 
@@ -258,13 +261,16 @@ bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_
 		return false;
 
 	points.emplace_back(point, hitbox, true);
-	const bool multipoint_for_hitbox = g_cfg->rage_bot.m_multi_points[hitbox_from_menu];
+	
+	// Get current weapon config
+	auto& weapon_cfg = get_current_weapon_config();
+	const bool multipoint_for_hitbox = weapon_cfg.m_multi_points[hitbox_from_menu];
 	if (!multipoint_for_hitbox)
 		return true;
 
-	float scale = g_cfg->rage_bot.m_hitbox_scale[hitbox_from_menu];
+	float scale = weapon_cfg.m_hitbox_scale[hitbox_from_menu];
 
-	if (!g_cfg->rage_bot.m_static_scale)
+	if (!weapon_cfg.m_static_scale)
 		scale = calc_point_scale(point, hitbox_data.m_radius);
 
 	float radius = hitbox_data.m_radius * (scale / 100.f);
@@ -403,6 +409,9 @@ void c_rage_bot::select_target()
 	if (!local_data)
 		return;
 
+	// Get current weapon config
+	auto& weapon_cfg = get_current_weapon_config();
+
 	float highest_damage = -1.f;
 	float closest_distance = FLT_MAX;
 	aim_point_t chosen_point{vec3_t{}, -1};
@@ -413,8 +422,8 @@ void c_rage_bot::select_target()
 			continue;
 
 		const int health = pawn->m_health();
-		int min_damage = min(override_damage ? g_cfg->rage_bot.m_minimum_damage_override
-			: g_cfg->rage_bot.m_minimum_damage, health);
+		int min_damage = min(override_damage ? weapon_cfg.m_minimum_damage_override
+			: weapon_cfg.m_minimum_damage, health);
 		if (is_taser)
 			min_damage = health;
 
@@ -606,8 +615,11 @@ void c_rage_bot::process_attack(c_user_cmd* user_cmd, vec3_t angle)
 		user_cmd->pb.set_attack1_start_history_index(0);
 	process_backtrack(m_best_target->m_lag_record);
 
-	if (g_cfg->rage_bot.m_auto_fire)
-		user_cmd->m_button_state.m_button_state |= IN_ATTACK;
+	if (g_cfg->rage_bot.m_auto_fire) {
+		auto& weapon_cfg = get_current_weapon_config();
+		if (weapon_cfg.m_auto_fire)
+			user_cmd->m_button_state.m_button_state |= IN_ATTACK;
+	}
 }
 
 void c_rage_bot::on_create_move()
@@ -676,8 +688,10 @@ void c_rage_bot::on_create_move()
 		user_cmd->m_button_state.m_button_state |= IN_ATTACK2;
 	}
 
+	// Get weapon config for auto stop
+	auto& weapon_cfg = get_current_weapon_config();
 	g_movement->auto_stop(user_cmd, local_player, active_weapon, no_spread,
-		g_cfg->rage_bot.m_auto_stop);
+		weapon_cfg.m_auto_stop);
 
 	bool is_taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
 
@@ -689,7 +703,9 @@ void c_rage_bot::on_create_move()
 
 	int hit_chance = calculate_hit_chance(m_best_target->m_pawn, best_angle, active_weapon, weapon_data, no_spread);
 
-	if (hit_chance >= (is_taser ? 70 : g_cfg->rage_bot.m_hit_chance)) {
+	// Get weapon config for hit_chance check
+	auto& hit_cfg = get_current_weapon_config();
+	if (hit_chance >= (is_taser ? 70 : hit_cfg.m_hit_chance)) {
 		for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
 			auto tick = user_cmd->pb.mutable_input_history(i);
 			if (tick) {

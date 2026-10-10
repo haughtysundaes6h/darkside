@@ -13,30 +13,67 @@
 void c_config_system::setup_values( )
 {
 	push_item( &g_cfg->rage_bot.m_enabled, "rage_bot", "enabled", g_cfg->rage_bot.m_enabled );
-	push_item( &g_cfg->rage_bot.m_enabled, "rage_bot", "silent", g_cfg->rage_bot.m_silent );
+	push_item( &g_cfg->rage_bot.m_silent, "rage_bot", "silent", g_cfg->rage_bot.m_silent );
 
-	for ( auto hitbox = 0; hitbox < 6; hitbox++ ) {
-		push_item( &g_cfg->rage_bot.m_hitboxes[ hitbox ], "rage_bot", std::format( "hitbox_{0}", hitbox ), g_cfg->rage_bot.m_hitboxes[ hitbox ] );
-		push_item( &g_cfg->rage_bot.m_hitboxes[ hitbox ], "rage_bot", std::format( "multi_points_{0}", hitbox ), g_cfg->rage_bot.m_hitboxes[ hitbox ] );
-		push_item( &g_cfg->rage_bot.m_hitbox_scale[ hitbox ], "rage_bot", std::format( "multi_points_scale_{0}", hitbox ), g_cfg->rage_bot.m_hitbox_scale[ hitbox ] );
+	// Save weapon config for each group
+	for (int group = 0; group < WEAPON_GROUP_MAX; group++) {
+		auto& cfg = g_cfg->rage_bot.m_weapon_config[group];
+		std::string prefix = std::format("weapon_group_{}", group);
+		
+		push_item(&cfg.m_enabled, "rage_bot", prefix + "_enabled", cfg.m_enabled);
+		push_item(&cfg.m_override_general, "rage_bot", prefix + "_override", cfg.m_override_general);
+		
+		for (auto hitbox = 0; hitbox < 6; hitbox++) {
+			push_item(&cfg.m_hitboxes[hitbox], "rage_bot", std::format("{}_{}_hitbox_{}", prefix, group, hitbox), cfg.m_hitboxes[hitbox]);
+			push_item(&cfg.m_multi_points[hitbox], "rage_bot", std::format("{}_{}_multipoint_{}", prefix, group, hitbox), cfg.m_multi_points[hitbox]);
+			push_item(&cfg.m_hitbox_scale[hitbox], "rage_bot", std::format("{}_{}_scale_{}", prefix, group, hitbox), cfg.m_hitbox_scale[hitbox]);
+		}
+		
+		push_item(&cfg.m_static_scale, "rage_bot", prefix + "_static_scale", cfg.m_static_scale);
+		push_item(&cfg.m_hit_chance, "rage_bot", prefix + "_hit_chance", cfg.m_hit_chance);
+		push_item(&cfg.m_minimum_damage, "rage_bot", prefix + "_min_damage", cfg.m_minimum_damage);
+		push_item(&cfg.m_minimum_damage_override, "rage_bot", prefix + "_min_damage_override", cfg.m_minimum_damage_override);
+		push_item(&cfg.m_auto_fire, "rage_bot", prefix + "_auto_fire", cfg.m_auto_fire);
+		push_item(&cfg.m_auto_stop, "rage_bot", prefix + "_auto_stop", cfg.m_auto_stop);
 	}
 
-	push_item( &g_cfg->rage_bot.m_static_scale, "rage_bot", "static_scale", g_cfg->rage_bot.m_static_scale );		
-
-	push_item( &g_cfg->rage_bot.m_minimum_damage, "rage_bot", "minimum_damage", g_cfg->rage_bot.m_minimum_damage );
-	push_item( &g_cfg->rage_bot.m_minimum_damage_override, "rage_bot", "minimum_damage_override", g_cfg->rage_bot.m_minimum_damage_override );
 	push_item( &g_cfg->rage_bot.m_override_damage_key_bind, "rage_bot", "override_damage_keybind", g_cfg->rage_bot.m_override_damage_key_bind );
 	push_item( &g_cfg->rage_bot.m_override_damage_key_bind_style, "rage_bot", "override_damage_keybind_style", g_cfg->rage_bot.m_override_damage_key_bind_style );
-	push_item( &g_cfg->rage_bot.m_hit_chance, "rage_bot", "hit_chance", g_cfg->rage_bot.m_hit_chance );
-	push_item( &g_cfg->rage_bot.m_auto_stop, "rage_bot", "auto_stop", g_cfg->rage_bot.m_auto_stop );
 
 	push_item( &g_cfg->anti_hit.m_enabled, "anti_aim", "enabled", g_cfg->anti_hit.m_enabled );
 	push_item( &g_cfg->anti_hit.m_at_target, "anti_aim", "at_target", g_cfg->anti_hit.m_at_target );
-	push_item( &g_cfg->anti_hit.m_override_pitch, "anti_aim", "override_pitch", g_cfg->anti_hit.m_override_pitch );
+	push_item( &g_cfg->anti_hit.m_pitch_mode, "anti_aim", "pitch_mode", g_cfg->anti_hit.m_pitch_mode );
 	push_item( &g_cfg->anti_hit.m_pitch_amount, "anti_aim", "pitch_amount", g_cfg->anti_hit.m_pitch_amount );
-	push_item( &g_cfg->anti_hit.m_override_yaw, "anti_aim", "override_yaw", g_cfg->anti_hit.m_override_yaw );
+	push_item( &g_cfg->anti_hit.m_yaw_mode, "anti_aim", "yaw_mode", g_cfg->anti_hit.m_yaw_mode );
 	push_item( &g_cfg->anti_hit.m_yaw_amount, "anti_aim", "yaw_amount", g_cfg->anti_hit.m_yaw_amount );
+	push_item( &g_cfg->anti_hit.m_jitter_enabled, "anti_aim", "jitter_enabled", g_cfg->anti_hit.m_jitter_enabled );
+	push_item( &g_cfg->anti_hit.m_jitter_mode, "anti_aim", "jitter_mode", g_cfg->anti_hit.m_jitter_mode );
 	push_item( &g_cfg->anti_hit.m_jitter_amount, "anti_aim", "jitter_amount", g_cfg->anti_hit.m_jitter_amount );
+	push_item( &g_cfg->anti_hit.m_desync_enabled, "anti_aim", "desync_enabled", g_cfg->anti_hit.m_desync_enabled );
+	push_item( &g_cfg->anti_hit.m_desync_mode, "anti_aim", "desync_mode", g_cfg->anti_hit.m_desync_mode );
+	push_item( &g_cfg->anti_hit.m_desync_left, "anti_aim", "desync_left", g_cfg->anti_hit.m_desync_left );
+	push_item( &g_cfg->anti_hit.m_desync_right, "anti_aim", "desync_right", g_cfg->anti_hit.m_desync_right );
+	
+	// Legit bot
+	push_item( &g_cfg->legit_bot.m_enabled, "legit_bot", "enabled", g_cfg->legit_bot.m_enabled );
+	push_item( &g_cfg->legit_bot.m_fov, "legit_bot", "fov", g_cfg->legit_bot.m_fov );
+	push_item( &g_cfg->legit_bot.m_smooth, "legit_bot", "smooth", g_cfg->legit_bot.m_smooth );
+	push_item( &g_cfg->legit_bot.m_triggerbot_enabled, "legit_bot", "triggerbot_enabled", g_cfg->legit_bot.m_triggerbot_enabled );
+	push_item( &g_cfg->legit_bot.m_backtrack_enabled, "legit_bot", "backtrack_enabled", g_cfg->legit_bot.m_backtrack_enabled );
+	push_item( &g_cfg->legit_bot.m_backtrack_ticks, "legit_bot", "backtrack_ticks", g_cfg->legit_bot.m_backtrack_ticks );
+
+	push_item( &g_cfg->visuals.m_player_esp.m_enabled, "player_esp", "enabled", g_cfg->visuals.m_player_esp.m_enabled );
+	push_item( &g_cfg->visuals.m_player_esp.m_bounding_box, "player_esp", "bounding_box", g_cfg->visuals.m_player_esp.m_bounding_box );
+	push_item( &g_cfg->visuals.m_player_esp.m_health_bar, "player_esp", "health_bar", g_cfg->visuals.m_player_esp.m_health_bar );
+	push_item( &g_cfg->visuals.m_player_esp.m_name, "player_esp", "name", g_cfg->visuals.m_player_esp.m_name );
+	push_item( &g_cfg->visuals.m_player_esp.m_weapon, "player_esp", "weapon", g_cfg->visuals.m_player_esp.m_weapon );
+	push_item( &g_cfg->visuals.m_player_esp.m_skeleton, "player_esp", "skeleton", g_cfg->visuals.m_player_esp.m_skeleton );
+	
+	// Misc
+	push_item( &g_cfg->misc.m_bunny_hop, "misc", "bunny_hop", g_cfg->misc.m_bunny_hop );
+	push_item( &g_cfg->misc.m_auto_strafe, "misc", "auto_strafe", g_cfg->misc.m_auto_strafe );
+	push_item( &g_cfg->misc.m_strafe_type, "misc", "strafe_type", g_cfg->misc.m_strafe_type );
+	push_item( &g_cfg->misc.m_strafe_smooth, "misc", "strafe_smooth", g_cfg->misc.m_strafe_smooth );
 
 	push_item( &g_cfg->visuals.m_player_esp.m_bounding_box, "player_esp", "bounding_box", g_cfg->visuals.m_player_esp.m_bounding_box );
 	push_item( &g_cfg->visuals.m_player_esp.m_health_bar, "player_esp", "health_bar", g_cfg->visuals.m_player_esp.m_health_bar );

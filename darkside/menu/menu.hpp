@@ -7,6 +7,8 @@
 #include <functional>
 #include <unordered_map>
 
+#include "../sdk/includes/imgui/imgui.h"
+
 // Neverlose-style modern menu system
 namespace menu {
     // Color scheme
