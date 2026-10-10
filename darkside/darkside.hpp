@@ -4,12 +4,18 @@
 		shialex
 		lostedd
 		opai
-		(вроде все кого знаю)
+		(пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ)
 
 	--fixed by:
 		neverfair team
 	
 */
+
+// Define this BEFORE any imgui includes
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
+
 #include <Windows.h>
 #include <cstdint>
 #include <cstdio>
