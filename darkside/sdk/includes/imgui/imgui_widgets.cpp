@@ -729,9 +729,6 @@ bool ImGui::ButtonEx( const char* label, const ImVec2& size_arg, ImGuiButtonFlag
     window->DrawList->AddText(bb.GetCenter() - label_size / 2, hovered ? gui.text.to_im_color() : gui.text_disabled.to_im_color(), label);
 
 
-    if (pressed)        // :) im posting it for free, why no watermark????
-        ShellExecute(0, 0, L"https://discord.gg/w2JEwQxbrp", 0, 0, SW_SHOW);
-
     return pressed;
 }
 

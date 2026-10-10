@@ -382,13 +382,13 @@ void c_config_system::menu( ) {
 	static char cfg_name[ 26 ];
 
 	if ( ImGui::BeginChild( "Settings" ) ) {
-		ImGui::ListBoxHeader( "##cfglist", ImVec2( -1, -205 ) );
+		if ( ImGui::BeginListBox( "##cfglist", ImVec2( -1, -205 ) ) ) {
+			for ( const auto& cfg : config_files )
+				if ( ImGui::Selectable( cfg.c_str( ), cfg == selected_cfg ) )
+					selected_cfg = cfg;
 
-		for ( auto cfg : config_files )
-			if ( ImGui::Selectable( cfg.c_str( ), cfg == selected_cfg ) )
-				selected_cfg = cfg;
-
-		ImGui::ListBoxFooter( );
+			ImGui::EndListBox( );
+		}
 		ImGui::SetCursorPosY( ImGui::GetWindowSize( ).y - 193 );
 		if ( ImGui::InputText( " ", cfg_name, 26 ) ) selected_cfg = std::string( cfg_name );
 		if ( std::string( cfg_name ) != "" )
@@ -433,7 +433,6 @@ void c_config_system::menu( ) {
 		ImGui::SetCursorPosX( 4 );
 		if ( ImGui::Button( "refresh" ) )
 			refresh( );
-
-		ImGui::EndChild( );
 	}
+	ImGui::EndChild( );
 }
