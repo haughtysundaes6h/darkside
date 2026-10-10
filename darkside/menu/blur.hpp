@@ -8,9 +8,9 @@
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "../sdk/includes/imgui/imgui.h"
-#include "imgui_internal.h"
-#include "imgui_impl_dx11.h"
-#include "imgui_impl_win32.h"
+#include "../sdk/includes/imgui/imgui_internal.h"
+#include "../sdk/includes/imgui/imgui_impl_dx11.h"
+#include "../sdk/includes/imgui/imgui_impl_win32.h"
 
 namespace blur {
 
