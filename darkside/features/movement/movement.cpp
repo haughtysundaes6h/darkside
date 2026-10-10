@@ -446,7 +446,7 @@ float c_movement::get_ideal_strafe_angle(float speed) const {
     // Формула идеального угла стрейфа для CS2
     // angle = atan(airaccel / speed)
     // airaccel ≈ 15-30 в CS2
-    float ideal = std::clamp(rad2deg(std::atan2(15.0f, speed)), 0.0f, 45.0f);
+    float ideal = std::clamp(static_cast<float>(rad2deg(std::atan2(15.0f, speed))), 0.0f, 45.0f);
     return ideal;
 }
 

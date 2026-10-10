@@ -323,8 +323,8 @@ public:
 	}
 	
 	int get_item_def_index() {
-		auto& item = m_attribute_manager()->m_item();
-		return static_cast<int>(item.m_defenition_index());
+		auto* item = m_attribute_manager()->m_item();
+		return item ? static_cast<int>(item->m_defenition_index()) : 0;
 	}
 	
 	float get_max_speed( ) {

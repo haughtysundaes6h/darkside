@@ -39,15 +39,16 @@
 #include "imgui_freetype.h"
 #include "imgui_internal.h"     // ImMin,ImMax,ImFontAtlasBuild*,
 #include <stdint.h>
-#include "Freetype/include/ft2build.h"
-#include FT_FREETYPE_H          // <freetype/freetype.h>
-#include FT_MODULE_H            // <freetype/ftmodapi.h>
-#include FT_GLYPH_H             // <freetype/ftglyph.h>
-#include FT_SYNTHESIS_H         // <freetype/ftsynth.h>
+
+// FreeType includes
+#include "Freetype/include/freetype/freetype.h"
+#include "Freetype/include/freetype/ftmodapi.h"
+#include "Freetype/include/freetype/ftglyph.h"
+#include "Freetype/include/freetype/ftsynth.h"
 
 #ifdef IMGUI_ENABLE_FREETYPE_LUNASVG
-#include FT_OTSVG_H             // <freetype/otsvg.h>
-#include FT_BBOX_H              // <freetype/ftbbox.h>
+#include "Freetype/include/freetype/otsvg.h"
+#include "Freetype/include/freetype/ftbbox.h"
 #include <lunasvg.h>
 #if !((FREETYPE_MAJOR >= 2) && (FREETYPE_MINOR >= 12))
 #error IMGUI_ENABLE_FREETYPE_LUNASVG requires FreeType version >= 2.12

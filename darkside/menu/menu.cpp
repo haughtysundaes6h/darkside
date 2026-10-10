@@ -1250,7 +1250,8 @@ void c_menu::draw_watermark() {
     // Get current time
     auto now = std::chrono::system_clock::now();
     auto time = std::chrono::system_clock::to_time_t(now);
-    auto tm = *std::localtime(&time);
+    std::tm tm;
+    localtime_s(&tm, &time);
     
     char time_buf[16];
     strftime(time_buf, sizeof(time_buf), "%H:%M:%S", &tm);
