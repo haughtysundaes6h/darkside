@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <array>
 
 class c_dumped_item;
 
@@ -17,6 +18,40 @@ struct item_t {
     T default_value;
 };
 
+// ============================================================================
+// WEAPON GROUPS
+// ============================================================================
+enum weapon_group_t : int {
+    WEAPON_GROUP_GENERAL = 0,   // Общие настройки
+    WEAPON_GROUP_PISTOL,        // Пистолеты
+    WEAPON_GROUP_HEAVY_PISTOL,  // Дигл, R8
+    WEAPON_GROUP_SMG,           // SMG
+    WEAPON_GROUP_RIFLE,         // M4, AK
+    WEAPON_GROUP_AUTO,          // Авто снайперки
+    WEAPON_GROUP_SCOUT,         // SSG 08
+    WEAPON_GROUP_AWP,           // AWP
+    WEAPON_GROUP_SHOTGUN,       // Дробовики
+    WEAPON_GROUP_LMG,           // LMG
+    WEAPON_GROUP_MAX
+};
+
+const char* const weapon_group_names[] = {
+    "General",
+    "Pistols",
+    "Heavy Pistol",
+    "SMG",
+    "Rifle",
+    "Auto Sniper",
+    "Scout",
+    "AWP",
+    "Shotgun",
+    "LMG"
+};
+
+// ============================================================================
+// CONFIG SYSTEM
+// ============================================================================
+
 class c_config_system {
 private:
     std::vector<item_t<bool>> booleans;
@@ -25,6 +60,7 @@ private:
     std::vector<item_t<int>> keybinds;
     std::vector<item_t<std::string>> strings;
     std::vector<item_t<c_color>> colors_rgb;
+    
 public:
     void push_item(bool* pointer, std::string category, std::string name, bool def_value);
     void push_item(int* pointer, std::string category, std::string name, int def_value);
@@ -42,36 +78,83 @@ public:
     std::vector<std::string> config_files;
 
     // ========================================================================
-    // RAGE BOT
+    // RAGE BOT - С ГРУППАМИ ОРУЖИЙ
     // ========================================================================
-    struct rage_bot_t {
-        bool m_enabled = false;
+    
+    // Настройки для каждой группы оружий
+    struct weapon_config_t {
+        bool m_enabled = true;
+        bool m_override_general = false;  // Использовать свои настройки вместо General
+        
+        // Hitboxes
         bool m_hitboxes[6] = {true, true, true, false, false, false};
         bool m_multi_points[6] = {true, true, true, false, false, false};
-        bool m_static_scale = true;
-        bool m_silent = true;
         int m_hitbox_scale[6] = {50, 50, 50, 50, 50, 50};
-        int m_minimum_damage = 50;
-        int m_minimum_damage_override = 10;
-        int m_hit_chance = 50;
+        bool m_static_scale = true;
+        
+        // Accuracy
+        int m_hit_chance = 60;
+        int m_minimum_damage = 20;
+        int m_minimum_damage_override = 1;
+        int m_minimum_damage_auto = 0;  // HP+X
+        
+        // Behavior
         bool m_auto_fire = true;
-        bool m_auto_stop = false;
-        bool m_auto_scope = false;
+        bool m_auto_stop = true;
+        int m_auto_stop_mode = 0;  // 0=full, 1=minimal, 2=between shots
+        bool m_auto_scope = true;
         bool m_delay_shot = false;
-        bool m_prefer_body = false;
+        
+        // Safety
         bool m_prefer_safe = false;
-
+        bool m_prefer_body = false;
+        bool m_prefer_baim_lethal = false;  // BAIM если убьёт
+        int m_baim_after_x_shots = 0;  // BAIM после X мисов
+    };
+    
+    struct rage_bot_t {
+        // Глобальные настройки
+        bool m_enabled = false;
+        bool m_silent = true;
+        
+        // Текущая выбранная группа в меню
+        int m_selected_group = 0;
+        
+        // Настройки по группам оружий
+        weapon_config_t m_weapon_config[WEAPON_GROUP_MAX];
+        
+        // Override keybind
         int m_override_damage_key_bind = 0;
         int m_override_damage_key_bind_style = 0;
-
-        struct weapon_settings_t {
-            bool m_enabled = true;
-            int m_hit_chance = 50;
-            int m_min_damage = 50;
-            int m_min_damage_override = 10;
-            bool m_auto_stop = false;
-            bool m_auto_scope = false;
-        } weapon_group[7];
+        
+        // Resolver
+        bool m_resolver_enabled = true;
+        bool m_resolver_override = false;
+        int m_resolver_override_key = 0;
+        int m_resolver_override_key_style = 0;
+        
+        // Exploits
+        bool m_double_tap = false;
+        int m_double_tap_key = 0;
+        int m_double_tap_key_style = 0;
+        bool m_hide_shots = false;
+        int m_hide_shots_key = 0;
+        int m_hide_shots_key_style = 0;
+        
+        // Получение конфига для текущего оружия
+        weapon_config_t& get_weapon_config(int group) {
+            if (group < 0 || group >= WEAPON_GROUP_MAX)
+                group = WEAPON_GROUP_GENERAL;
+            
+            auto& cfg = m_weapon_config[group];
+            
+            // Если не override - возвращаем General
+            if (group != WEAPON_GROUP_GENERAL && !cfg.m_override_general) {
+                return m_weapon_config[WEAPON_GROUP_GENERAL];
+            }
+            
+            return cfg;
+        }
     } rage_bot;
 
     // ========================================================================
@@ -79,17 +162,17 @@ public:
     // ========================================================================
     struct legit_bot_t {
         bool m_enabled = false;
-        int m_target_selection = 0; // 0 = closest to crosshair, 1 = lowest health, 2 = closest distance
+        int m_target_selection = 0;
         float m_fov = 5.0f;
         float m_smooth = 15.0f;
-        bool m_hitboxes[4] = {true, true, true, true}; // head, neck, chest, stomach
+        bool m_hitboxes[4] = {true, true, true, true};
         bool m_aim_backtrack = false;
         bool m_silent = false;
         
         // Triggerbot
         bool m_triggerbot_enabled = false;
         int m_triggerbot_key = 0;
-        int m_triggerbot_key_style = 1; // hold by default
+        int m_triggerbot_key_style = 1;
         int m_triggerbot_delay = 0;
         int m_triggerbot_hitchance = 100;
         bool m_triggerbot_head_only = false;
@@ -102,39 +185,63 @@ public:
     } legit_bot;
 
     // ========================================================================
-    // ANTI-AIM
+    // ANTI-AIM - РАСШИРЕННЫЙ
     // ========================================================================
     struct anti_hit_t {
         bool m_enabled = false;
         
-        // Pitch
-        int m_pitch_mode = 0; // 0=off, 1=down, 2=up, 3=zero, 4=custom
-        bool m_override_pitch = false;
+        // ====== PITCH ======
+        int m_pitch_mode = 0;  // 0=off, 1=down, 2=up, 3=zero, 4=custom
         int m_pitch_amount = 0;
         
-        // Yaw
-        int m_yaw_mode = 0;
-        bool m_override_yaw = false;
+        // ====== YAW ======
+        int m_yaw_mode = 0;  // 0=off, 1=backward, 2=sideways, 3=spin, 4=at target, 5=custom
         bool m_at_target = false;
         int m_yaw_amount = 0;
         
-        // Jitter
+        // ====== JITTER ======
         bool m_jitter_enabled = false;
+        int m_jitter_mode = 0;  // 0=offset, 1=center, 2=random
         int m_jitter_amount = 0;
         
-        // Desync
+        // ====== DESYNC ======
         bool m_desync_enabled = false;
-        int m_desync_mode = 0; // 0=static, 1=jitter, 2=switch
+        int m_desync_mode = 0;  // 0=static, 1=jitter, 2=switch
         int m_desync_left = 58;
         int m_desync_right = 58;
         int m_flip_key = 0;
-        int m_flip_key_style = 2; // toggle
+        int m_flip_key_style = 2;
         
-        // Fakelag
+        // ====== FAKELAG ======
         bool m_fakelag_enabled = false;
-        int m_fakelag_mode = 0;
+        int m_fakelag_mode = 0;  // 0=static, 1=random, 2=adaptive
         int m_fakelag_limit = 7;
         bool m_fakelag_on_peek = false;
+        bool m_fakelag_on_ground_only = false;
+        
+        // ====== ANTI BRUTEFORCE ======
+        bool m_anti_bruteforce = false;
+        int m_anti_bruteforce_mode = 0;  // 0=switch, 1=random
+        
+        // ====== УСЛОВИЯ ======
+        // Настройки для разных условий (стоя, в движении, в воздухе, slow walk, etc.)
+        struct condition_t {
+            bool m_override = false;
+            int m_pitch_mode = 0;
+            int m_yaw_mode = 0;
+            int m_yaw_amount = 0;
+            bool m_jitter = false;
+            int m_jitter_amount = 0;
+        };
+        
+        condition_t m_standing;
+        condition_t m_moving;
+        condition_t m_air;
+        condition_t m_slow_walk;
+        
+        // Legacy (для совместимости)
+        bool m_override_pitch = false;
+        bool m_override_yaw = false;
     } anti_hit;
 
     // ========================================================================
@@ -152,14 +259,16 @@ public:
             bool m_flags = true;
             bool m_skeleton = false;
             bool m_distance = false;
+            bool m_armor_bar = false;
             
             c_color m_name_color{1.f, 1.f, 1.f, 1.f};
             c_color m_box_color{1.f, 1.f, 1.f, 1.f};
+            c_color m_skeleton_color{1.f, 1.f, 1.f, 0.8f};
         } m_player_esp;
         
         struct chams_t {
             bool m_enabled = false;
-            int m_material = 0; // 0=flat, 1=textured, 2=glow, 3=metallic, 4=crystal
+            int m_material = 0;
             c_color m_visible_color{0.2f, 0.8f, 0.2f, 1.f};
             c_color m_hidden_color{0.8f, 0.2f, 0.2f, 1.f};
             bool m_xqz = true;
@@ -185,6 +294,7 @@ public:
             bool m_spread_circle = false;
             bool m_aa_lines = false;
             bool m_desync = false;
+            bool m_manual_aa = false;
         } m_indicators;
     } visuals;
 
@@ -197,7 +307,7 @@ public:
         int m_distance = 120;
         int m_override_fov = 0;
         int m_thirdperson_key_bind = 0;
-        int m_thirdperson_key_bind_style = 2; // toggle
+        int m_thirdperson_key_bind_style = 2;
     } world_esp;
 
     struct world_modulation_t {
@@ -226,7 +336,7 @@ public:
         // Movement
         bool m_bunny_hop = false;
         bool m_auto_strafe = false;
-        int m_strafe_type = 0;
+        int m_strafe_type = 0;  // 0=legit, 1=directional, 2=rage
         int m_strafe_smooth = 70;
         
         bool m_edge_jump = false;
@@ -241,6 +351,20 @@ public:
         int m_edge_bug_key = 0;
         int m_edge_bug_key_style = 1;
         
+        bool m_long_jump = false;
+        int m_long_jump_key = 0;
+        int m_long_jump_key_style = 1;
+        
+        bool m_infinite_duck = false;
+        bool m_fast_duck = false;
+        bool m_slide_walk = false;
+        
+        // Slow Walk
+        bool m_slow_walk = false;
+        int m_slow_walk_key = 0;
+        int m_slow_walk_key_style = 1;
+        int m_slow_walk_speed = 34;
+        
         // Other
         bool m_reveal_ranks = false;
         bool m_clan_tag = false;
@@ -248,7 +372,6 @@ public:
         bool m_spectator_list = true;
         bool m_keybinds_list = true;
         bool m_auto_accept = false;
-        bool m_infinite_duck = false;
         
         // Buy bot
         bool m_buy_bot_enabled = false;
@@ -256,6 +379,7 @@ public:
         int m_buy_bot_secondary = 0;
         bool m_buy_bot_armor = false;
         bool m_buy_bot_defuser = false;
+        bool m_buy_bot_grenades = false;
     } misc;
 
     // ========================================================================
@@ -285,6 +409,43 @@ public:
         int m_selected_type = 0;
         c_dumped_item* m_selected_item = nullptr;
     } skins;
+    
+    // ========================================================================
+    // HELPER - Определение группы оружия по weapon type
+    // ========================================================================
+    static weapon_group_t get_weapon_group(int weapon_type, int item_def_index) {
+        // Особые случаи по item_def_index
+        switch (item_def_index) {
+            case 1:   // Deagle
+            case 64:  // R8 Revolver
+                return WEAPON_GROUP_HEAVY_PISTOL;
+            case 40:  // SSG 08 (Scout)
+                return WEAPON_GROUP_SCOUT;
+            case 9:   // AWP
+                return WEAPON_GROUP_AWP;
+            case 11:  // G3SG1
+            case 38:  // SCAR-20
+                return WEAPON_GROUP_AUTO;
+        }
+        
+        // По типу оружия
+        switch (weapon_type) {
+            case 1:  // Pistol
+                return WEAPON_GROUP_PISTOL;
+            case 2:  // SMG
+                return WEAPON_GROUP_SMG;
+            case 3:  // Rifle
+                return WEAPON_GROUP_RIFLE;
+            case 4:  // Shotgun
+                return WEAPON_GROUP_SHOTGUN;
+            case 5:  // Sniper
+                return WEAPON_GROUP_SCOUT;  // Default to scout if not awp/auto
+            case 6:  // LMG
+                return WEAPON_GROUP_LMG;
+            default:
+                return WEAPON_GROUP_GENERAL;
+        }
+    }
 };
 
 inline const auto g_config_system = std::make_unique<c_config_system>();

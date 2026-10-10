@@ -243,82 +243,124 @@ void c_menu::draw_content() {
 // ============================================================================
 
 void c_menu::draw_rage_tab() {
-    // Subtabs
-    const char* subtabs[] = {"Main", "Weapons", "Exploits"};
-    
-    ImGui::BeginChild("##rage_subtabs", ImVec2(0, 35), false);
-    for (int i = 0; i < 3; i++) {
-        if (i > 0) ImGui::SameLine();
-        
-        int subtab_idx = static_cast<int>(menu::subtab_id::rage_main) + i;
-        bool selected = (static_cast<int>(m_current_subtab) == subtab_idx);
-        
-        ImVec4 col = selected ? m_colors.accent : m_colors.button;
-        ImGui::PushStyleColor(ImGuiCol_Button, col);
-        
-        if (ImGui::Button(subtabs[i], ImVec2(100, 28))) {
-            m_current_subtab = static_cast<menu::subtab_id>(subtab_idx);
+    // Weapon group selector
+    ImGui::BeginChild("##weapon_groups", ImVec2(0, 40), false);
+    {
+        for (int i = 0; i < WEAPON_GROUP_MAX; i++) {
+            if (i > 0) ImGui::SameLine();
+            
+            bool selected = (g_cfg->rage_bot.m_selected_group == i);
+            ImVec4 col = selected ? m_colors.accent : m_colors.button;
+            
+            ImGui::PushStyleColor(ImGuiCol_Button, col);
+            
+            // Короткие имена для кнопок
+            const char* short_names[] = {"GEN", "PIST", "DEAG", "SMG", "RIFLE", "AUTO", "SCOUT", "AWP", "SHOT", "LMG"};
+            
+            if (ImGui::Button(short_names[i], ImVec2(55, 30))) {
+                g_cfg->rage_bot.m_selected_group = i;
+            }
+            
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", weapon_group_names[i]);
+                ImGui::EndTooltip();
+            }
+            
+            ImGui::PopStyleColor();
         }
-        
-        ImGui::PopStyleColor();
     }
     ImGui::EndChild();
     
     ImGui::Separator();
     ImGui::Spacing();
     
-    // Content based on subtab
-    ImGui::BeginChild("##rage_content", ImVec2(0, 0), false);
+    // Получаем текущий конфиг группы
+    int group = g_cfg->rage_bot.m_selected_group;
+    auto& weapon_cfg = g_cfg->rage_bot.m_weapon_config[group];
     
+    ImGui::BeginChild("##rage_content", ImVec2(0, 0), false);
     ImGui::Columns(2, nullptr, false);
     
-    // Left column
-    group_box("Aimbot", ImVec2(0, 250), [this]() {
-        static const char* hitboxes[] = {"Head", "Chest", "Stomach", "Arms", "Legs", "Feet"};
-        static const char* multi_points[] = {"Head", "Chest", "Stomach", "Arms", "Legs", "Feet"};
-        
-        checkbox_ex("Enabled", &g_cfg->rage_bot.m_enabled);
-        checkbox_ex("Silent Aim", &g_cfg->rage_bot.m_silent);
-        checkbox_ex("Auto Fire", &g_cfg->rage_bot.m_auto_fire);
-        checkbox_ex("Auto Stop", &g_cfg->rage_bot.m_auto_stop);
-        checkbox_ex("Auto Scope", &g_cfg->rage_bot.m_auto_scope);
-        
-        separator_ex();
-        
-        multi_combo_ex("Hitboxes", g_cfg->rage_bot.m_hitboxes, hitboxes, IM_ARRAYSIZE(hitboxes));
-        multi_combo_ex("Multi-Points", g_cfg->rage_bot.m_multi_points, multi_points, IM_ARRAYSIZE(multi_points));
-    });
+    // ============ LEFT COLUMN ============
     
-    group_box("Accuracy", ImVec2(0, 200), [this]() {
-        slider_int_ex("Hit Chance", &g_cfg->rage_bot.m_hit_chance, 1, 100, "%d%%");
-        slider_int_ex("Min Damage", &g_cfg->rage_bot.m_minimum_damage, 1, 100);
-        slider_int_ex("Override Damage", &g_cfg->rage_bot.m_minimum_damage_override, 1, 100);
-        keybind_ex("Override Key", &g_cfg->rage_bot.m_override_damage_key_bind, &g_cfg->rage_bot.m_override_damage_key_bind_style);
+    // Global settings (только для General)
+    if (group == WEAPON_GROUP_GENERAL) {
+        group_box("Global", ImVec2(0, 100), [this]() {
+            checkbox_ex("Enabled", &g_cfg->rage_bot.m_enabled);
+            checkbox_ex("Silent Aim", &g_cfg->rage_bot.m_silent);
+        });
+    } else {
+        // Override checkbox для других групп
+        group_box("Weapon Config", ImVec2(0, 60), [&weapon_cfg]() {
+            ImGui::Checkbox("Override General Settings", &weapon_cfg.m_override_general);
+        });
+    }
+    
+    group_box("Aimbot", ImVec2(0, 280), [this, &weapon_cfg]() {
+        static const char* hitboxes[] = {"Head", "Chest", "Stomach", "Arms", "Legs", "Feet"};
         
-        checkbox_ex("Static Point Scale", &g_cfg->rage_bot.m_static_scale);
+        checkbox_ex("Enabled", &weapon_cfg.m_enabled);
+        checkbox_ex("Auto Fire", &weapon_cfg.m_auto_fire);
+        checkbox_ex("Auto Stop", &weapon_cfg.m_auto_stop);
+        
+        if (weapon_cfg.m_auto_stop) {
+            static const char* stop_modes[] = {"Full Stop", "Minimal", "Between Shots"};
+            combo_ex("Stop Mode", &weapon_cfg.m_auto_stop_mode, stop_modes, 3);
+        }
+        
+        checkbox_ex("Auto Scope", &weapon_cfg.m_auto_scope);
+        checkbox_ex("Delay Shot", &weapon_cfg.m_delay_shot);
+        
+        separator_ex("Hitboxes");
+        
+        multi_combo_ex("Hitboxes", weapon_cfg.m_hitboxes, hitboxes, 6);
+        multi_combo_ex("Multi-Points", weapon_cfg.m_multi_points, hitboxes, 6);
     });
     
     ImGui::NextColumn();
     
-    // Right column
-    group_box("Point Scale", ImVec2(0, 250), [this]() {
-        static const char* hitbox_names[] = {"Head", "Chest", "Stomach", "Arms", "Legs", "Feet"};
+    // ============ RIGHT COLUMN ============
+    
+    group_box("Accuracy", ImVec2(0, 220), [this, &weapon_cfg]() {
+        slider_int_ex("Hit Chance", &weapon_cfg.m_hit_chance, 1, 100, "%d%%");
+        slider_int_ex("Min Damage", &weapon_cfg.m_minimum_damage, 1, 100);
+        slider_int_ex("Override Dmg", &weapon_cfg.m_minimum_damage_override, 1, 100);
         
-        if (g_cfg->rage_bot.m_static_scale) {
+        keybind_ex("Override Key", &g_cfg->rage_bot.m_override_damage_key_bind, 
+                   &g_cfg->rage_bot.m_override_damage_key_bind_style);
+        
+        separator_ex();
+        
+        checkbox_ex("Static Point Scale", &weapon_cfg.m_static_scale);
+        
+        if (weapon_cfg.m_static_scale) {
+            static const char* hitbox_names[] = {"Head", "Chest", "Stomach", "Arms", "Legs", "Feet"};
             for (int i = 0; i < 6; i++) {
-                if (g_cfg->rage_bot.m_multi_points[i]) {
-                    slider_int_ex(hitbox_names[i], &g_cfg->rage_bot.m_hitbox_scale[i], 1, 100, "%d%%");
+                if (weapon_cfg.m_multi_points[i]) {
+                    slider_int_ex(hitbox_names[i], &weapon_cfg.m_hitbox_scale[i], 1, 100, "%d%%");
                 }
             }
-        } else {
-            ImGui::TextColored(m_colors.text_disabled, "Enable 'Static Point Scale' to configure");
         }
     });
     
-    group_box("Other", ImVec2(0, 150), [this]() {
-        checkbox_ex("Delay Shot", &g_cfg->rage_bot.m_delay_shot);
-        checkbox_ex("Prefer Body", &g_cfg->rage_bot.m_prefer_body);
-        checkbox_ex("Prefer Safe Point", &g_cfg->rage_bot.m_prefer_safe);
+    group_box("Safety", ImVec2(0, 180), [this, &weapon_cfg]() {
+        checkbox_ex("Prefer Safe Point", &weapon_cfg.m_prefer_safe);
+        checkbox_ex("Prefer Body Aim", &weapon_cfg.m_prefer_body);
+        checkbox_ex("Body Aim if Lethal", &weapon_cfg.m_prefer_baim_lethal);
+        slider_int_ex("BAIM After X Misses", &weapon_cfg.m_baim_after_x_shots, 0, 5);
+    });
+    
+    group_box("Exploits", ImVec2(0, 150), [this]() {
+        checkbox_ex("Double Tap", &g_cfg->rage_bot.m_double_tap);
+        if (g_cfg->rage_bot.m_double_tap) {
+            keybind_ex("DT Key", &g_cfg->rage_bot.m_double_tap_key, &g_cfg->rage_bot.m_double_tap_key_style);
+        }
+        
+        checkbox_ex("Hide Shots", &g_cfg->rage_bot.m_hide_shots);
+        if (g_cfg->rage_bot.m_hide_shots) {
+            keybind_ex("HS Key", &g_cfg->rage_bot.m_hide_shots_key, &g_cfg->rage_bot.m_hide_shots_key_style);
+        }
     });
     
     ImGui::Columns(1);
@@ -369,59 +411,198 @@ void c_menu::draw_legit_tab() {
 }
 
 void c_menu::draw_antiaim_tab() {
-    ImGui::Columns(2, nullptr, false);
+    // Subtabs
+    const char* subtabs[] = {"Angles", "Desync", "Fakelag", "Conditions"};
+    static int current_subtab = 0;
     
-    group_box("Angles", ImVec2(0, 280), [this]() {
-        checkbox_ex("Enabled", &g_cfg->anti_hit.m_enabled);
+    ImGui::BeginChild("##aa_subtabs", ImVec2(0, 35), false);
+    for (int i = 0; i < 4; i++) {
+        if (i > 0) ImGui::SameLine();
         
-        separator_ex("Pitch");
+        ImVec4 col = (current_subtab == i) ? m_colors.accent : m_colors.button;
+        ImGui::PushStyleColor(ImGuiCol_Button, col);
         
-        static const char* pitch_modes[] = {"Off", "Down", "Up", "Zero", "Custom"};
-        combo_ex("Mode", &g_cfg->anti_hit.m_pitch_mode, pitch_modes, IM_ARRAYSIZE(pitch_modes));
-        
-        if (g_cfg->anti_hit.m_pitch_mode == 4) {
-            slider_int_ex("Custom Pitch", &g_cfg->anti_hit.m_pitch_amount, -89, 89);
+        if (ImGui::Button(subtabs[i], ImVec2(100, 28))) {
+            current_subtab = i;
         }
         
-        separator_ex("Yaw");
-        
-        static const char* yaw_modes[] = {"Off", "Backward", "Sideways", "Spin", "At Target", "Custom"};
-        combo_ex("Mode##yaw", &g_cfg->anti_hit.m_yaw_mode, yaw_modes, IM_ARRAYSIZE(yaw_modes));
-        
-        checkbox_ex("At Target", &g_cfg->anti_hit.m_at_target);
-        slider_int_ex("Yaw Add", &g_cfg->anti_hit.m_yaw_amount, -180, 180);
-        
-        separator_ex("Jitter");
-        
-        checkbox_ex("Enable Jitter", &g_cfg->anti_hit.m_jitter_enabled);
-        slider_int_ex("Jitter Range", &g_cfg->anti_hit.m_jitter_amount, 0, 180);
-    });
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndChild();
     
-    ImGui::NextColumn();
+    ImGui::Separator();
+    ImGui::Spacing();
     
-    group_box("Desync", ImVec2(0, 200), [this]() {
-        checkbox_ex("Enabled", &g_cfg->anti_hit.m_desync_enabled);
-        
-        static const char* desync_modes[] = {"Static", "Jitter", "Switch"};
-        combo_ex("Mode", &g_cfg->anti_hit.m_desync_mode, desync_modes, IM_ARRAYSIZE(desync_modes));
-        
-        slider_int_ex("Left Limit", &g_cfg->anti_hit.m_desync_left, 0, 58);
-        slider_int_ex("Right Limit", &g_cfg->anti_hit.m_desync_right, 0, 58);
-        
-        keybind_ex("Flip Key", &g_cfg->anti_hit.m_flip_key, &g_cfg->anti_hit.m_flip_key_style);
-    });
+    ImGui::BeginChild("##aa_content", ImVec2(0, 0), false);
     
-    group_box("Fakelag", ImVec2(0, 150), [this]() {
-        checkbox_ex("Enabled", &g_cfg->anti_hit.m_fakelag_enabled);
+    if (current_subtab == 0) {
+        // ========== ANGLES ==========
+        ImGui::Columns(2, nullptr, false);
         
-        static const char* fakelag_modes[] = {"Static", "Random", "Adaptive"};
-        combo_ex("Mode", &g_cfg->anti_hit.m_fakelag_mode, fakelag_modes, IM_ARRAYSIZE(fakelag_modes));
+        group_box("General", ImVec2(0, 80), [this]() {
+            checkbox_ex("Enabled", &g_cfg->anti_hit.m_enabled);
+        });
         
-        slider_int_ex("Limit", &g_cfg->anti_hit.m_fakelag_limit, 1, 14);
-        checkbox_ex("On Peek", &g_cfg->anti_hit.m_fakelag_on_peek);
-    });
+        group_box("Pitch", ImVec2(0, 150), [this]() {
+            static const char* pitch_modes[] = {"Off", "Down", "Up", "Zero", "Custom"};
+            combo_ex("Mode", &g_cfg->anti_hit.m_pitch_mode, pitch_modes, 5);
+            
+            if (g_cfg->anti_hit.m_pitch_mode == 4) {
+                slider_int_ex("Custom Angle", &g_cfg->anti_hit.m_pitch_amount, -89, 89);
+            }
+        });
+        
+        group_box("Yaw Base", ImVec2(0, 180), [this]() {
+            static const char* yaw_modes[] = {"Off", "Backward", "Sideways", "Spin", "At Target", "Custom"};
+            combo_ex("Mode", &g_cfg->anti_hit.m_yaw_mode, yaw_modes, 6);
+            
+            checkbox_ex("At Target", &g_cfg->anti_hit.m_at_target);
+            slider_int_ex("Yaw Add", &g_cfg->anti_hit.m_yaw_amount, -180, 180);
+        });
+        
+        ImGui::NextColumn();
+        
+        group_box("Jitter", ImVec2(0, 180), [this]() {
+            checkbox_ex("Enabled", &g_cfg->anti_hit.m_jitter_enabled);
+            
+            if (g_cfg->anti_hit.m_jitter_enabled) {
+                static const char* jitter_modes[] = {"Offset", "Center", "Random"};
+                combo_ex("Mode", &g_cfg->anti_hit.m_jitter_mode, jitter_modes, 3);
+                slider_int_ex("Range", &g_cfg->anti_hit.m_jitter_amount, 0, 180);
+            }
+        });
+        
+        group_box("Manual AA", ImVec2(0, 150), [this]() {
+            ImGui::TextColored(m_colors.text_disabled, "Manual anti-aim direction");
+            ImGui::TextColored(m_colors.text_disabled, "Use arrow keys during game");
+        });
+        
+        ImGui::Columns(1);
+    }
+    else if (current_subtab == 1) {
+        // ========== DESYNC ==========
+        ImGui::Columns(2, nullptr, false);
+        
+        group_box("Desync", ImVec2(0, 280), [this]() {
+            checkbox_ex("Enabled", &g_cfg->anti_hit.m_desync_enabled);
+            
+            if (g_cfg->anti_hit.m_desync_enabled) {
+                static const char* desync_modes[] = {"Static", "Jitter", "Switch"};
+                combo_ex("Mode", &g_cfg->anti_hit.m_desync_mode, desync_modes, 3);
+                
+                separator_ex("Limits");
+                
+                slider_int_ex("Left Limit", &g_cfg->anti_hit.m_desync_left, 0, 58);
+                slider_int_ex("Right Limit", &g_cfg->anti_hit.m_desync_right, 0, 58);
+                
+                separator_ex();
+                
+                keybind_ex("Flip Key", &g_cfg->anti_hit.m_flip_key, &g_cfg->anti_hit.m_flip_key_style);
+            }
+        });
+        
+        ImGui::NextColumn();
+        
+        group_box("Anti Bruteforce", ImVec2(0, 150), [this]() {
+            checkbox_ex("Enabled", &g_cfg->anti_hit.m_anti_bruteforce);
+            
+            if (g_cfg->anti_hit.m_anti_bruteforce) {
+                static const char* bf_modes[] = {"Switch Side", "Random"};
+                combo_ex("Mode", &g_cfg->anti_hit.m_anti_bruteforce_mode, bf_modes, 2);
+            }
+        });
+        
+        group_box("Info", ImVec2(0, 100), [this]() {
+            ImGui::TextColored(m_colors.accent, "Real: %.1f", g_anti_hit->get_real_yaw());
+            ImGui::TextColored(m_colors.warning, "Fake: %.1f", g_anti_hit->get_fake_yaw());
+            ImGui::TextColored(m_colors.success, "Desync: %.1f", g_anti_hit->get_desync_amount());
+        });
+        
+        ImGui::Columns(1);
+    }
+    else if (current_subtab == 2) {
+        // ========== FAKELAG ==========
+        ImGui::Columns(2, nullptr, false);
+        
+        group_box("Fakelag", ImVec2(0, 250), [this]() {
+            checkbox_ex("Enabled", &g_cfg->anti_hit.m_fakelag_enabled);
+            
+            if (g_cfg->anti_hit.m_fakelag_enabled) {
+                static const char* fakelag_modes[] = {"Static", "Random", "Adaptive"};
+                combo_ex("Mode", &g_cfg->anti_hit.m_fakelag_mode, fakelag_modes, 3);
+                
+                slider_int_ex("Limit", &g_cfg->anti_hit.m_fakelag_limit, 1, 14);
+                
+                separator_ex("Conditions");
+                
+                checkbox_ex("On Peek", &g_cfg->anti_hit.m_fakelag_on_peek);
+                checkbox_ex("On Ground Only", &g_cfg->anti_hit.m_fakelag_on_ground_only);
+            }
+        });
+        
+        ImGui::NextColumn();
+        
+        group_box("Info", ImVec2(0, 150), [this]() {
+            ImGui::TextColored(m_colors.text_disabled, "Fakelag chokes packets to");
+            ImGui::TextColored(m_colors.text_disabled, "make you harder to hit.");
+            ImGui::Spacing();
+            ImGui::TextColored(m_colors.warning, "Max 14 ticks in CS2");
+        });
+        
+        ImGui::Columns(1);
+    }
+    else if (current_subtab == 3) {
+        // ========== CONDITIONS ==========
+        static int selected_condition = 0;
+        const char* conditions[] = {"Standing", "Moving", "In Air", "Slow Walk"};
+        
+        ImGui::BeginChild("##cond_select", ImVec2(150, 0), true);
+        for (int i = 0; i < 4; i++) {
+            if (ImGui::Selectable(conditions[i], selected_condition == i)) {
+                selected_condition = i;
+            }
+        }
+        ImGui::EndChild();
+        
+        ImGui::SameLine();
+        
+        ImGui::BeginChild("##cond_settings", ImVec2(0, 0), false);
+        
+        anti_hit_t::condition_t* cond = nullptr;
+        switch (selected_condition) {
+            case 0: cond = &g_cfg->anti_hit.m_standing; break;
+            case 1: cond = &g_cfg->anti_hit.m_moving; break;
+            case 2: cond = &g_cfg->anti_hit.m_air; break;
+            case 3: cond = &g_cfg->anti_hit.m_slow_walk; break;
+        }
+        
+        if (cond) {
+            group_box(conditions[selected_condition], ImVec2(0, 300), [this, cond]() {
+                checkbox_ex("Override Default", &cond->m_override);
+                
+                if (cond->m_override) {
+                    separator_ex();
+                    
+                    static const char* pitch_modes[] = {"Off", "Down", "Up", "Zero", "Custom"};
+                    combo_ex("Pitch", &cond->m_pitch_mode, pitch_modes, 5);
+                    
+                    static const char* yaw_modes[] = {"Off", "Backward", "Sideways", "Spin", "At Target"};
+                    combo_ex("Yaw", &cond->m_yaw_mode, yaw_modes, 5);
+                    
+                    slider_int_ex("Yaw Add", &cond->m_yaw_amount, -180, 180);
+                    
+                    checkbox_ex("Jitter", &cond->m_jitter);
+                    if (cond->m_jitter) {
+                        slider_int_ex("Jitter Range", &cond->m_jitter_amount, 0, 180);
+                    }
+                }
+            });
+        }
+        
+        ImGui::EndChild();
+    }
     
-    ImGui::Columns(1);
+    ImGui::EndChild();
 }
 
 void c_menu::draw_visuals_tab() {
@@ -563,57 +744,160 @@ void c_menu::draw_visuals_tab() {
 }
 
 void c_menu::draw_misc_tab() {
-    ImGui::Columns(2, nullptr, false);
+    // Subtabs
+    const char* subtabs[] = {"Movement", "Other", "Buy Bot"};
+    static int current_subtab = 0;
     
-    group_box("Movement", ImVec2(0, 280), [this]() {
-        checkbox_ex("Bunny Hop", &g_cfg->misc.m_bunny_hop);
-        checkbox_ex("Auto Strafe", &g_cfg->misc.m_auto_strafe);
+    ImGui::BeginChild("##misc_subtabs", ImVec2(0, 35), false);
+    for (int i = 0; i < 3; i++) {
+        if (i > 0) ImGui::SameLine();
         
-        if (g_cfg->misc.m_auto_strafe) {
-            static const char* strafe_types[] = {"Legit", "Directional", "Rage"};
-            combo_ex("Type", &g_cfg->misc.m_strafe_type, strafe_types, IM_ARRAYSIZE(strafe_types));
-            slider_int_ex("Smooth", &g_cfg->misc.m_strafe_smooth, 1, 99, "%d%%");
+        ImVec4 col = (current_subtab == i) ? m_colors.accent : m_colors.button;
+        ImGui::PushStyleColor(ImGuiCol_Button, col);
+        
+        if (ImGui::Button(subtabs[i], ImVec2(100, 28))) {
+            current_subtab = i;
         }
         
-        separator_ex();
-        
-        checkbox_ex("Edge Jump", &g_cfg->misc.m_edge_jump);
-        keybind_ex("Key##edge", &g_cfg->misc.m_edge_jump_key, &g_cfg->misc.m_edge_jump_key_style);
-        
-        checkbox_ex("Jump Bug", &g_cfg->misc.m_jump_bug);
-        keybind_ex("Key##jumpbug", &g_cfg->misc.m_jump_bug_key, &g_cfg->misc.m_jump_bug_key_style);
-        
-        checkbox_ex("Edge Bug", &g_cfg->misc.m_edge_bug);
-        keybind_ex("Key##edgebug", &g_cfg->misc.m_edge_bug_key, &g_cfg->misc.m_edge_bug_key_style);
-    });
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndChild();
     
-    ImGui::NextColumn();
+    ImGui::Separator();
+    ImGui::Spacing();
     
-    group_box("Other", ImVec2(0, 200), [this]() {
-        checkbox_ex("Reveal Ranks", &g_cfg->misc.m_reveal_ranks);
-        checkbox_ex("Clan Tag", &g_cfg->misc.m_clan_tag);
-        checkbox_ex("Watermark", &g_cfg->misc.m_watermark);
-        checkbox_ex("Spectator List", &g_cfg->misc.m_spectator_list);
-        checkbox_ex("Keybinds List", &g_cfg->misc.m_keybinds_list);
-        
-        separator_ex();
-        
-        checkbox_ex("Auto Accept", &g_cfg->misc.m_auto_accept);
-        checkbox_ex("Infinite Duck", &g_cfg->misc.m_infinite_duck);
-    });
+    ImGui::BeginChild("##misc_content", ImVec2(0, 0), false);
     
-    group_box("Buy Bot", ImVec2(0, 150), [this]() {
-        checkbox_ex("Enabled", &g_cfg->misc.m_buy_bot_enabled);
+    if (current_subtab == 0) {
+        // ========== MOVEMENT ==========
+        ImGui::Columns(2, nullptr, false);
         
-        static const char* weapons[] = {"Auto", "AWP", "Scout", "Deagle", "Dualies"};
-        combo_ex("Primary", &g_cfg->misc.m_buy_bot_primary, weapons, IM_ARRAYSIZE(weapons));
-        combo_ex("Secondary", &g_cfg->misc.m_buy_bot_secondary, weapons, IM_ARRAYSIZE(weapons));
+        group_box("Basic Movement", ImVec2(0, 200), [this]() {
+            checkbox_ex("Bunny Hop", &g_cfg->misc.m_bunny_hop);
+            
+            checkbox_ex("Auto Strafe", &g_cfg->misc.m_auto_strafe);
+            
+            if (g_cfg->misc.m_auto_strafe) {
+                static const char* strafe_types[] = {"Legit", "Directional", "Rage"};
+                combo_ex("Type", &g_cfg->misc.m_strafe_type, strafe_types, 3);
+                slider_int_ex("Smooth", &g_cfg->misc.m_strafe_smooth, 1, 99, "%d%%");
+            }
+        });
         
-        checkbox_ex("Armor + Helmet", &g_cfg->misc.m_buy_bot_armor);
-        checkbox_ex("Defuse Kit", &g_cfg->misc.m_buy_bot_defuser);
-    });
+        group_box("Advanced", ImVec2(0, 250), [this]() {
+            checkbox_ex("Edge Jump", &g_cfg->misc.m_edge_jump);
+            if (g_cfg->misc.m_edge_jump) {
+                keybind_ex("Key##ej", &g_cfg->misc.m_edge_jump_key, &g_cfg->misc.m_edge_jump_key_style);
+            }
+            
+            separator_ex();
+            
+            checkbox_ex("Jump Bug", &g_cfg->misc.m_jump_bug);
+            if (g_cfg->misc.m_jump_bug) {
+                keybind_ex("Key##jb", &g_cfg->misc.m_jump_bug_key, &g_cfg->misc.m_jump_bug_key_style);
+            }
+            
+            separator_ex();
+            
+            checkbox_ex("Edge Bug", &g_cfg->misc.m_edge_bug);
+            if (g_cfg->misc.m_edge_bug) {
+                keybind_ex("Key##eb", &g_cfg->misc.m_edge_bug_key, &g_cfg->misc.m_edge_bug_key_style);
+            }
+            
+            separator_ex();
+            
+            checkbox_ex("Long Jump", &g_cfg->misc.m_long_jump);
+            if (g_cfg->misc.m_long_jump) {
+                keybind_ex("Key##lj", &g_cfg->misc.m_long_jump_key, &g_cfg->misc.m_long_jump_key_style);
+            }
+        });
+        
+        ImGui::NextColumn();
+        
+        group_box("Other Movement", ImVec2(0, 180), [this]() {
+            checkbox_ex("Infinite Duck", &g_cfg->misc.m_infinite_duck);
+            checkbox_ex("Fast Duck", &g_cfg->misc.m_fast_duck);
+            checkbox_ex("Slide Walk", &g_cfg->misc.m_slide_walk);
+            
+            separator_ex();
+            
+            checkbox_ex("Slow Walk", &g_cfg->misc.m_slow_walk);
+            if (g_cfg->misc.m_slow_walk) {
+                keybind_ex("Key##sw", &g_cfg->misc.m_slow_walk_key, &g_cfg->misc.m_slow_walk_key_style);
+                slider_int_ex("Speed", &g_cfg->misc.m_slow_walk_speed, 1, 100, "%d%%");
+            }
+        });
+        
+        group_box("Info", ImVec2(0, 150), [this]() {
+            ImGui::TextColored(m_colors.text_disabled, "Movement Tips:");
+            ImGui::BulletText("Edge Jump: Auto-jump at edges");
+            ImGui::BulletText("Jump Bug: No fall damage");
+            ImGui::BulletText("Edge Bug: Stick to edges");
+            ImGui::BulletText("LJ: Optimal long jump");
+        });
+        
+        ImGui::Columns(1);
+    }
+    else if (current_subtab == 1) {
+        // ========== OTHER ==========
+        ImGui::Columns(2, nullptr, false);
+        
+        group_box("Features", ImVec2(0, 200), [this]() {
+            checkbox_ex("Reveal Ranks", &g_cfg->misc.m_reveal_ranks);
+            checkbox_ex("Clan Tag", &g_cfg->misc.m_clan_tag);
+            checkbox_ex("Auto Accept", &g_cfg->misc.m_auto_accept);
+        });
+        
+        group_box("HUD", ImVec2(0, 150), [this]() {
+            checkbox_ex("Watermark", &g_cfg->misc.m_watermark);
+            checkbox_ex("Spectator List", &g_cfg->misc.m_spectator_list);
+            checkbox_ex("Keybinds List", &g_cfg->misc.m_keybinds_list);
+        });
+        
+        ImGui::NextColumn();
+        
+        group_box("Menu", ImVec2(0, 150), [this]() {
+            ImGui::TextColored(m_colors.text_disabled, "Menu Key: INSERT");
+            ImGui::TextColored(m_colors.text_disabled, "Panic Key: END");
+        });
+        
+        ImGui::Columns(1);
+    }
+    else if (current_subtab == 2) {
+        // ========== BUY BOT ==========
+        ImGui::Columns(2, nullptr, false);
+        
+        group_box("Buy Bot", ImVec2(0, 300), [this]() {
+            checkbox_ex("Enabled", &g_cfg->misc.m_buy_bot_enabled);
+            
+            if (g_cfg->misc.m_buy_bot_enabled) {
+                separator_ex("Weapons");
+                
+                static const char* primary[] = {"Off", "Auto", "AWP", "Scout", "AK/M4", "Galil/Famas"};
+                combo_ex("Primary", &g_cfg->misc.m_buy_bot_primary, primary, 6);
+                
+                static const char* secondary[] = {"Off", "Deagle", "Dualies", "Five-Seven/Tec9", "P250"};
+                combo_ex("Secondary", &g_cfg->misc.m_buy_bot_secondary, secondary, 5);
+                
+                separator_ex("Equipment");
+                
+                checkbox_ex("Armor + Helmet", &g_cfg->misc.m_buy_bot_armor);
+                checkbox_ex("Defuse Kit", &g_cfg->misc.m_buy_bot_defuser);
+                checkbox_ex("Grenades", &g_cfg->misc.m_buy_bot_grenades);
+            }
+        });
+        
+        ImGui::NextColumn();
+        
+        group_box("Info", ImVec2(0, 150), [this]() {
+            ImGui::TextColored(m_colors.text_disabled, "Buy bot will automatically");
+            ImGui::TextColored(m_colors.text_disabled, "purchase items at round start.");
+        });
+        
+        ImGui::Columns(1);
+    }
     
-    ImGui::Columns(1);
+    ImGui::EndChild();
 }
 
 void c_menu::draw_skins_tab() {
