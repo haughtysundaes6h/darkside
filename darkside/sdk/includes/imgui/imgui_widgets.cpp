@@ -37,9 +37,10 @@ Index of this file:
 #endif
 
 #ifdef _WIN32
-#define byte win_byte_override
+#ifndef _HAS_STD_BYTE
+#define _HAS_STD_BYTE 0
+#endif
 #include <windows.h>
-#undef byte
 #else
 #include <windows.h>
 #endif
