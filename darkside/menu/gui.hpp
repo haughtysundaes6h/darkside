@@ -332,6 +332,12 @@ public:
     bool row_options_begin( const char* id, float width = 216.f );
     void row_options_end( );
 
+    // --- Multibox (multi-select dropdown) ---
+    // A dropdown that shows multiple checkboxes for selecting several items at once.
+    // Shows "None", "item1, item2, ..." or "All" based on selection.
+    // labels: array of item names, values: array of bools, count: number of items
+    bool row_multibox( const char* label, const char* const* items, bool* values, int count, const char* description = "Click to select multiple options." );
+
     // Sub-menu row + its popup in one call - the row draws itself, clicking it opens the
     // card beside it: `if ( gui.row_popup( "Pitch" ) ) { ...content... gui.popup_end(); }`
     bool row_popup( const char* label, const char* description = "Open this section to adjust its settings.", float width = 216.f );

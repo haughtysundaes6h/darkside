@@ -221,33 +221,102 @@ void c_menu::draw() {
 }
 
 void c_menu::draw_rage() {
+    // Weapon group names for combo
+    static const char* weapon_groups[] = {
+        "General", "Pistols", "Heavy Pistol", "SMG", "Rifle", 
+        "Auto Sniper", "Scout", "AWP", "Shotgun", "LMG"
+    };
+    
+    // Hitbox names for multibox
+    static const char* hitbox_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+    static const char* multipoint_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
+    
     gui.begin_grid(2);
 
+    // ========== LEFT COLUMN ==========
     gui.grid_col(0);
+    
+    // MAIN settings
     gui.grid_box("MAIN", k_auto_height);
     gui.row_checkbox("Enabled", &g_cfg->rage_bot.m_enabled);
     gui.row_checkbox("Silent Aim", &g_cfg->rage_bot.m_silent);
-    auto& cfg = g_cfg->rage_bot.m_weapon_config[0];
-    gui.row_checkbox("Automatic Fire", &cfg.m_auto_fire);
     gui.end_group_box();
-
+    
+    // WEAPON GROUP selector
+    gui.grid_box("WEAPON", k_auto_height);
+    gui.row_begin(); 
+    ImGui::Combo("Group", &g_cfg->rage_bot.m_selected_group, weapon_groups, IM_ARRAYSIZE(weapon_groups));
+    
+    // Get current weapon config
+    auto& cfg = g_cfg->rage_bot.m_weapon_config[g_cfg->rage_bot.m_selected_group];
+    
+    // Override toggle for non-general groups
+    if (g_cfg->rage_bot.m_selected_group != WEAPON_GROUP_GENERAL) {
+        gui.row_checkbox("Override General", &cfg.m_override_general);
+    }
+    gui.end_group_box();
+    
+    // HITBOXES multibox
     gui.grid_box("HITBOXES", k_auto_height);
-    gui.row_checkbox("Head", &cfg.m_hitboxes[0]);
-    gui.row_checkbox("Chest", &cfg.m_hitboxes[1]);
-    gui.row_checkbox("Stomach", &cfg.m_hitboxes[2]);
-    gui.row_checkbox("Arms", &cfg.m_hitboxes[3]);
-    gui.row_checkbox("Legs", &cfg.m_hitboxes[4]);
+    gui.row_multibox("Target", hitbox_names, cfg.m_hitboxes, 6, "Select which body parts to target.");
+    gui.end_group_box();
+    
+    // MULTIPOINTS with gear icon
+    gui.grid_box("MULTIPOINTS", k_auto_height);
+    gui.row_begin();
+    if (gui.row_options_begin("##multipoint_settings", 200.f)) {
+        gui.popup_section_begin("##mp_sliders", true);
+        ImGui::SliderInt("Head Scale", &cfg.m_hitbox_scale[0], 0, 100, "%d%%");
+        ImGui::SliderInt("Body Scale", &cfg.m_hitbox_scale[1], 0, 100, "%d%%");
+        gui.popup_section_end();
+        gui.row_options_end();
+    }
+    gui.row_multibox("Points", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.");
+    
+    gui.row_checkbox("Static Point Scale", &cfg.m_static_scale);
     gui.end_group_box();
 
+    // ========== RIGHT COLUMN ==========
     gui.grid_col(1);
+    
+    // ACCURACY settings
     gui.grid_box("ACCURACY", k_auto_height);
     gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
     gui.row_begin(); ImGui::SliderInt("Minimum Damage", &cfg.m_minimum_damage, 0, 120);
+    
+    // Min damage override with gear
+    gui.row_begin();
+    if (gui.row_options_begin("##dmg_override", 220.f)) {
+        gui.popup_section_begin("##dmg_settings", true);
+        ImGui::SliderInt("Override Damage", &cfg.m_minimum_damage_override, 1, 120);
+        ImGui::SliderInt("Auto (HP + X)", &cfg.m_minimum_damage_auto, 0, 50);
+        gui.popup_section_end();
+        gui.row_options_end();
+    }
+    ImGui::Checkbox("Damage Override", &cfg.m_enabled);
     gui.end_group_box();
-
+    
+    // BEHAVIOR settings
     gui.grid_box("BEHAVIOR", k_auto_height);
+    gui.row_checkbox("Automatic Fire", &cfg.m_auto_fire);
     gui.row_checkbox("Automatic Stop", &cfg.m_auto_stop);
+    
+    // Auto stop mode selector
+    draw_animated_row("##auto_stop_mode", cfg.m_auto_stop, [&cfg] {
+        static const char* stop_modes[] = { "Full", "Minimal", "Between Shots" };
+        ImGui::Combo("Stop Mode", &cfg.m_auto_stop_mode, stop_modes, IM_ARRAYSIZE(stop_modes));
+    });
+    
     gui.row_checkbox("Automatic Scope", &cfg.m_auto_scope);
+    gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
+    gui.end_group_box();
+    
+    // SAFETY settings
+    gui.grid_box("SAFETY", k_auto_height);
+    gui.row_checkbox("Prefer Safe Point", &cfg.m_prefer_safe);
+    gui.row_checkbox("Prefer Body Aim", &cfg.m_prefer_body);
+    gui.row_checkbox("Body Aim If Lethal", &cfg.m_prefer_baim_lethal);
+    gui.row_begin(); ImGui::SliderInt("BAIM After Misses", &cfg.m_baim_after_x_shots, 0, 10);
     gui.end_group_box();
 
     gui.end_grid();
