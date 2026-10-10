@@ -1,5 +1,13 @@
 #pragma once
 
+// This header is what pulls imgui in for binds.cpp, and it has to ask for the ImVec2/ImVec4
+// operators before it does: gui.hpp defines the macro too, but it is included second there, by
+// which point the imgui include guards have already shut the operators out of the translation
+// unit. Guarded, so a caller that already defined it (imgui_widgets.cpp) is left alone.
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
+
 #include "../sdk/includes/imgui/imgui.h"
 #include "../sdk/includes/imgui/imgui_internal.h"
 #include <cstdint>
