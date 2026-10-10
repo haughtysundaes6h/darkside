@@ -1362,7 +1362,7 @@ bool ImGui::Checkbox(const char* label, bool* v)
 
     const ImGuiLastItemData bind_item_data = g.LastItemData;
     const menu_binds::target_id bind_target =
-        menu_binds::checkbox_item(window, id, label, total_bb, v);
+        menu_binds::checkbox_item(window, id, label, total_bb, frame_bb, v);
     g.LastItemData = bind_item_data;
 
     // ---------------------------------------------------------
@@ -3662,7 +3662,7 @@ bool ImGui::SliderScalar( const char* label, ImGuiDataType data_type, void* p_da
 
     const ImGuiLastItemData bind_item_data = g.LastItemData;
     const menu_binds::target_id bind_target =
-        menu_binds::slider_item(window, id, label, total_bb, data_type, p_data, p_min, p_max);
+        menu_binds::slider_item(window, id, label, total_bb, frame_bb, data_type, p_data, p_min, p_max);
     g.LastItemData = bind_item_data;
 
     static std::unordered_map<ImGuiID, float> row_hover_anims;

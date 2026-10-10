@@ -448,6 +448,7 @@ bool c_gui::sub_menu(const char* label) {
 void c_gui::row_begin() {
     if ( m_row_started ) Separator( );
     m_row_started = true;
+    m_row_slot_claims = 0; // a fresh row: nothing owns the slot left of its control yet
 }
 
 bool c_gui::row_checkbox(const char* label, bool* v, const char* description) {
@@ -1119,6 +1120,8 @@ bool c_gui::row_options_begin( const char* id, float width ) {
     const ImRect slot = next_checkbox_swatch_rect( );
     const ImRect bb( ImVec2( slot.Min.x - 3.f * s, slot.Min.y - 2.f * s ),
                      ImVec2( slot.Max.x + 3.f * s, slot.Max.y + 2.f * s ) );
+
+    ++m_row_slot_claims; // same slot the swatch uses; the bind gear steps left of it
 
     ImGui::PushID( id );
     const std::string popup_name = std::string( id ) + "Popup";
@@ -3181,6 +3184,8 @@ bool c_gui::color_begin_at( const char* id, color_slot* slots, int count, const 
 bool c_gui::color_picker_begin( const char* id, color_slot* slots, int count ) {
     if ( count <= 0 || ImGui::GetCurrentWindow( )->SkipItems )
         return false;
+    // Claimed before the row's Checkbox runs, so the bind gear steps left of the swatch.
+    ++m_row_slot_claims;
     return color_begin_at( id, slots, count, next_checkbox_swatch_rect( ), true );
 }
 

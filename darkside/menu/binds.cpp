@@ -1,5 +1,6 @@
 #include "binds.hpp"
 #include "gui.hpp"
+#include "hashes.hpp" // ICON_FA_* glyphs for the bind menu rows
 #include "../sdk/includes/json/json.h"
 
 // gui.hpp ends with `using namespace std;`, so by the time the Windows headers are parsed here
@@ -33,13 +34,14 @@ enum class bind_mode { always = 0, hold = 1, toggle = 2 };
 struct bind_entry {
     std::uint64_t id = 0;
     int key = 0;
-    bind_mode mode = bind_mode::hold;
+    bind_mode mode = bind_mode::toggle;
     bool bool_value = true;
     int int_value = 0;
     float float_value = 0.f;
     bool toggled = false;
     bool was_down = false;
     bool active = false;
+    bool show_in_overlay = true; // the eye in the bind card: list this one in the KEYBINDS panel
 };
 
 struct bind_target {
@@ -68,6 +70,23 @@ bool g_dirty = false;
 std::uint64_t g_capture_entry = 0;
 std::array<bool, 0xA6> g_capture_down{};
 constexpr const char* k_bind_file = "c:\\airflow\\binds.json";
+
+// --- Bind menu state ------------------------------------------------------------------------
+// The menu is a root card (Copy Lua Path / one row per bind / New Bind / Hotkeys / Reset) whose
+// rows open a child card on *hover*, the way neverlose's does. Only one child is up at a time,
+// so which one it is lives here rather than per row.
+//
+// g_submenu_opened gates the request we hand to gui.popup_animation(): that call toggles, so
+// re-asserting "open" every frame would slam the card shut again, and an outside click (hitting
+// another row of the root card, which ImGui treats as a click outside the child) would otherwise
+// be undone on the very next frame. One request per latch change, and the latch only changes
+// when a different row is hovered.
+constexpr std::uint64_t k_draft_entry = ~0ull;
+std::uint64_t g_submenu = 0;       // entry id of the open child card (k_draft_entry = "New Bind")
+bool g_submenu_opened = false;     // the open request for g_submenu has already been issued
+target_id g_draft_target = 0;      // which target the pending "New Bind" belongs to
+bind_entry g_draft{};              // the pending bind, committed once it gets a key
+bool g_overlay_enabled = true;     // "Hotkeys": draw the on-screen keybind list at all
 
 std::uint64_t hash_key(const std::string& value) {
     std::uint64_t hash = 1469598103934665603ull;
@@ -126,6 +145,16 @@ std::string key_name(int key) {
     return "VK " + std::to_string(key);
 }
 
+// What a bind calls itself in the menu: `Toggle "N"`, `Hold "D"`, `Always`, or - while it has no
+// key yet - the "New Bind" row it was created from.
+std::string entry_label(const bind_entry& entry) {
+    if (entry.mode == bind_mode::always)
+        return gui.tr("Always");
+    if (entry.key <= 0)
+        return gui.tr("New Bind");
+    return std::string(gui.tr(mode_name(entry.mode))) + " \"" + key_name(entry.key) + "\"";
+}
+
 void mark_dirty() {
     g_dirty = true;
 }
@@ -147,6 +176,8 @@ void load_once() {
     }
     if (!data.is_object() || !data.contains("targets") || !data["targets"].is_array())
         return;
+
+    g_overlay_enabled = data.value("hotkeys", true);
 
     try {
         for (const auto& saved_target : data["targets"]) {
@@ -175,6 +206,7 @@ void load_once() {
                 entry.bool_value = saved_entry.value("bool_value", true);
                 entry.int_value = saved_entry.value("int_value", 0);
                 entry.float_value = saved_entry.value("float_value", 0.f);
+                entry.show_in_overlay = saved_entry.value("show_in_overlay", true);
                 if (std::isfinite(entry.float_value))
                     target.entries.push_back(entry);
             }
@@ -198,6 +230,7 @@ void save_if_dirty() {
 
     nlohmann::json data;
     data["version"] = 1;
+    data["hotkeys"] = g_overlay_enabled;
     data["targets"] = nlohmann::json::array();
     for (const auto& [id, target] : g_targets) {
         if (target.entries.empty() || !target.pointer_seen)
@@ -211,7 +244,7 @@ void save_if_dirty() {
             saved_target["entries"].push_back({
                 {"id", entry.id}, {"key", entry.key}, {"mode", static_cast<int>(entry.mode)},
                 {"bool_value", entry.bool_value}, {"int_value", entry.int_value},
-                {"float_value", entry.float_value}
+                {"float_value", entry.float_value}, {"show_in_overlay", entry.show_in_overlay}
             });
         }
         data["targets"].push_back(std::move(saved_target));
@@ -263,93 +296,479 @@ bool update_capture(bind_entry& entry) {
     return false;
 }
 
-void draw_bind_editor(bind_target& target, const ImRect& rect) {
-    ImGui::PushID(target.key.c_str());
-    const bool hovered = ImGui::IsMouseHoveringRect(rect.Min, rect.Max, true);
-    const bool clicked = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+// write_base() is defined below, next to the rest of the pointer plumbing.
+void write_base(bind_target& target);
 
-    if (!target.entries.empty()) {
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        draw->AddCircleFilled(ImVec2(rect.Min.x + 3.f * gui.m_scale, rect.GetCenter().y),
-                              2.f * gui.m_scale, gui.accent_color.to_im_color());
+// --- Bind menu -------------------------------------------------------------------------------
+//
+// Layout mirrors neverlose's: a gear in the gap left of the row's control opens a context menu
+// (right-clicking the row does the same), and every bind in it opens its own card on hover.
+//
+//   Copy Lua Path                         ##bind_menu  (root card)
+//   ----------
+//   Toggle "N"                >           -> ##bind_sub_<id>    Key / Mode / Value + actions
+//   Hold "D"                  >
+//   New Bind                  >           -> ##bind_sub_draft   (the same card, pending bind)
+//   Hotkeys
+//   ----------
+//   Reset
+
+// The gui.cpp row helpers (cfg_anim / cfg_mix) are file-static over there, so the bind cards keep
+// their own rather than widening that header for three functions.
+float row_anim(ImGuiID id, bool active, float speed = 15.f) {
+    static std::unordered_map<ImGuiID, float> anims;
+    float& a = anims[id];
+    a = ImLerp(a, active ? 1.f : 0.f, 1.f - std::exp(-speed * ImMin(ImGui::GetIO().DeltaTime, 0.05f)));
+    return a;
+}
+
+ImVec4 lerp_color(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+}
+
+ImU32 mix_color(const ImVec4& a, const ImVec4& b, float t) {
+    return ImGui::GetColorU32(lerp_color(a, b, t));
+}
+
+void request_submenu(std::uint64_t entry_id) {
+    if (g_submenu == entry_id)
+        return;
+    g_submenu = entry_id;
+    g_submenu_opened = false; // one open request per latch change - see g_submenu_opened
+}
+
+struct menu_row {
+    ImVec2 pos;
+    float width = 0.f;
+    float height = 0.f;
+    bool hovered = false;
+    bool clicked = false;
+};
+
+// One line of a bind card. `lit` keeps a row highlighted while whatever it opened is still up.
+menu_row bind_menu_row(const char* id, const char* icon, const char* label, bool chevron,
+                       bool lit, const ImVec4& tint, bool dim = false) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float s = gui.m_scale;
+    const float w = ImGui::GetContentRegionAvail().x, h = 30.f * s;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    ImGui::InvisibleButton(id, ImVec2(w, h));
+    // A child card is a focused popup sitting above this one, and ImGui refuses every hover test
+    // on items of a popup something is open on top of - which is exactly the gesture that has to
+    // keep working here. Parent and child never overlap, so test the rect directly and take the
+    // click the same way instead of relying on this item's own hover state.
+    menu_row row{ pos, w, h, ImGui::IsMouseHoveringRect(pos, pos + ImVec2(w, h), true), false };
+    row.clicked = row.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+
+    const float t = row_anim(ImGui::GetID(id), row.hovered || lit);
+    if (t > 0.01f)
+        draw->AddRectFilled(pos, pos + ImVec2(w, h), gui.frame_inactive.to_im_color(t * 0.7f), 6.f * s);
+
+    const ImVec4 base = dim ? gui.text_disabled.to_vec4(1.f, false)
+                            : ImVec4(tint.x, tint.y, tint.z, tint.w * 0.82f);
+    const ImU32 fg = mix_color(base, tint, t);
+    const float fs = font->FontSize, icon_fs = 13.f * s, cy = pos.y + h * 0.5f;
+
+    const float lx = pos.x + 8.f * s;
+    if (icon) {
+        const ImVec2 isz = font->CalcTextSizeA(icon_fs, FLT_MAX, 0.f, icon);
+        draw->AddText(font, icon_fs, ImVec2(IM_ROUND(lx + (16.f * s - isz.x) * 0.5f),
+                                            IM_ROUND(cy - isz.y * 0.5f)), fg, icon);
     }
 
-    bool wants_open = false;
-    const float popup_anim = gui.popup_animation("##bind_editor", clicked, wants_open);
-    const ImVec2 anchor(rect.Max.x + 8.f * gui.m_scale, rect.GetCenter().y);
-    const bool editor_open = gui.begin_popup_card_at(
-        "##bind_editor", wants_open, popup_anim, anchor, ImVec2(0.f, 0.5f), 310.f);
-    if (editor_open) {
-        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts.Size > 4 ? ImGui::GetIO().Fonts->Fonts[4] : ImGui::GetFont());
-        ImGui::TextUnformatted(target.label.c_str());
-        ImGui::PopFont();
-        ImGui::TextDisabled("Right-click the item to edit binds");
-        ImGui::TextDisabled("Last active bind wins");
-        ImGui::Separator();
+    const char* shown = gui.tr(label);
+    const char* end = ImGui::FindRenderedTextEnd(shown);
+    draw->AddText(font, fs, ImVec2(lx + 25.f * s, IM_ROUND(cy - TextLineCenterY(font, fs))),
+                  fg, shown, end);
 
-        int remove_index = -1;
-        static const char* modes[] = { "Always", "Hold", "Toggle" };
-        for (int index = 0; index < static_cast<int>(target.entries.size()); ++index) {
-            bind_entry& entry = target.entries[index];
-            ImGui::PushID(static_cast<int>(entry.id));
-            ImGui::Text("Bind %d", index + 1);
+    if (chevron) {
+        const ImVec2 csz = font->CalcTextSizeA(icon_fs, FLT_MAX, 0.f, ICON_FA_CHEVRON_RIGHT);
+        draw->AddText(font, icon_fs, ImVec2(IM_ROUND(pos.x + w - 6.f * s - csz.x),
+                                            IM_ROUND(cy - csz.y * 0.5f)), fg, ICON_FA_CHEVRON_RIGHT);
+    }
+    return row;
+}
 
-            const bool capturing = g_capture_entry == entry.id;
-            const std::string button_text = capturing ? "Press a key..." : key_name(entry.key);
-            if (ImGui::Button(button_text.c_str(), ImVec2(125.f * gui.m_scale, 28.f * gui.m_scale)))
-                begin_capture(entry);
-            update_capture(entry);
+void bind_menu_separator() {
+    const float s = gui.m_scale, w = ImGui::GetContentRegionAvail().x;
+    const ImVec2 p = ImGui::GetCursorScreenPos() + ImVec2(0.f, 4.f * s);
+    ImGui::GetWindowDrawList()->AddLine(p, p + ImVec2(w, 0.f), gui.popup_border.to_im_color(0.55f), 1.f * s);
+    ImGui::Dummy(ImVec2(w, 9.f * s));
+}
 
-            ImGui::SameLine();
-            int mode = static_cast<int>(entry.mode);
-            ImGui::SetNextItemWidth(105.f * gui.m_scale);
-            if (ImGui::Combo("##mode", &mode, modes, IM_ARRAYSIZE(modes))) {
-                entry.mode = static_cast<bind_mode>(mode);
-                entry.toggled = false;
-                entry.was_down = entry.key > 0 && (GetAsyncKeyState(entry.key) & 0x8000) != 0;
+// "Key  [ N ]" - clicking the box arms begin_capture(); the next key pressed lands in `entry`.
+bool bind_key_row(bind_entry& entry) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float s = gui.m_scale;
+    const float w = ImGui::GetContentRegionAvail().x, h = 30.f * s;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##key", ImVec2(w, h));
+
+    const float fs = font->FontSize, cy = pos.y + h * 0.5f;
+    draw->AddText(font, fs, ImVec2(pos.x + 8.f * s, IM_ROUND(cy - TextLineCenterY(font, fs))),
+                  gui.text.to_im_color(1.f, false), gui.tr("Key"));
+
+    const bool capturing = g_capture_entry == entry.id;
+    const std::string shown = capturing ? std::string("...")
+        : (entry.key > 0 ? key_name(entry.key) : std::string("-"));
+    const float box_h = 22.f * s;
+    const float box_w = ImMax(40.f * s, font->CalcTextSizeA(fs, FLT_MAX, 0.f, shown.c_str()).x + 16.f * s);
+    const ImVec2 box_min(pos.x + w - 6.f * s - box_w, IM_ROUND(cy - box_h * 0.5f));
+    const ImRect box(box_min, box_min + ImVec2(box_w, box_h));
+
+    const bool hovered = ImGui::IsMouseHoveringRect(box.Min, box.Max, true);
+    bool started = false;
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !capturing) {
+        begin_capture(entry);
+        started = true;
+    }
+    const float t = row_anim(ImGui::GetID("##keybox"), hovered || capturing);
+    draw->AddRectFilled(box.Min, box.Max, gui.field_bg.to_im_color(0.9f, false), 5.f * s);
+    if (t > 0.01f)
+        draw->AddRect(box.Min, box.Max, gui.accent_color.to_im_color(t, false), 5.f * s, 0, 1.f * s);
+    const ImVec2 tsz = font->CalcTextSizeA(fs, FLT_MAX, 0.f, shown.c_str());
+    draw->AddText(font, fs, ImVec2(IM_ROUND(box.GetCenter().x - tsz.x * 0.5f),
+                                   IM_ROUND(box.GetCenter().y - TextLineCenterY(font, fs))),
+                  capturing ? gui.accent_color.to_im_color(1.f, false) : gui.text.to_im_color(1.f, false),
+                  shown.c_str());
+    return started;
+}
+
+// "Mode  [ Toggle | Hold ]". An `always` bind (only reachable from an older binds.json) lights
+// neither segment; picking either one converts it.
+bool bind_mode_row(bind_entry& entry) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float s = gui.m_scale;
+    const float w = ImGui::GetContentRegionAvail().x, h = 30.f * s;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##mode", ImVec2(w, h));
+
+    const float fs = font->FontSize, cy = pos.y + h * 0.5f;
+    draw->AddText(font, fs, ImVec2(pos.x + 8.f * s, IM_ROUND(cy - TextLineCenterY(font, fs))),
+                  gui.text.to_im_color(1.f, false), gui.tr("Mode"));
+
+    static const char* names[] = { "Toggle", "Hold" };
+    static const bind_mode modes[] = { bind_mode::toggle, bind_mode::hold };
+    const float seg_h = 22.f * s, seg_w = 46.f * s, gap = 3.f * s;
+    const float right = pos.x + w - 6.f * s, top = IM_ROUND(cy - seg_h * 0.5f);
+    bool changed = false;
+
+    for (int i = 0; i < 2; ++i) {
+        const ImVec2 min(right - (seg_w + gap) * (2 - i) + gap, top);
+        const ImRect bb(min, min + ImVec2(seg_w, seg_h));
+        const bool hovered = ImGui::IsMouseHoveringRect(bb.Min, bb.Max, true);
+        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && entry.mode != modes[i]) {
+            entry.mode = modes[i];
+            entry.toggled = false;
+            entry.was_down = entry.key > 0 && (GetAsyncKeyState(entry.key) & 0x8000) != 0;
+            changed = true;
+        }
+        const float t = row_anim(ImGui::GetID(names[i]), entry.mode == modes[i]);
+        if (t > 0.01f)
+            draw->AddRectFilled(bb.Min, bb.Max, gui.accent_color.to_im_color(t, false), 5.f * s);
+        else if (hovered)
+            draw->AddRectFilled(bb.Min, bb.Max, gui.frame_inactive.to_im_color(0.7f), 5.f * s);
+        const char* shown = gui.tr(names[i]);
+        const ImVec2 tsz = font->CalcTextSizeA(fs, FLT_MAX, 0.f, shown);
+        draw->AddText(font, fs, ImVec2(IM_ROUND(bb.GetCenter().x - tsz.x * 0.5f),
+                                       IM_ROUND(bb.GetCenter().y - TextLineCenterY(font, fs))),
+                      mix_color(gui.text_disabled.to_vec4(1.f, false), gui.text.to_vec4(1.f, false),
+                                ImMax(t, hovered ? 0.6f : 0.f)), shown);
+    }
+    return changed;
+}
+
+// "Value [switch]" for a bool target. Ints and floats fall through to the real slider widgets,
+// which already render in the compact in-card style.
+bool bind_value_row(const bind_target& target, bind_entry& entry) {
+    if (target.type == value_type::integer)
+        return ImGui::SliderInt("Value", &entry.int_value, target.minimum_int, target.maximum_int);
+    if (target.type == value_type::floating)
+        return ImGui::SliderFloat("Value", &entry.float_value, target.minimum_float,
+                                  target.maximum_float, "%.2f");
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float s = gui.m_scale;
+    const float w = ImGui::GetContentRegionAvail().x, h = 30.f * s;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##value", ImVec2(w, h));
+
+    const float fs = font->FontSize, cy = pos.y + h * 0.5f;
+    draw->AddText(font, fs, ImVec2(pos.x + 8.f * s, IM_ROUND(cy - TextLineCenterY(font, fs))),
+                  gui.text.to_im_color(1.f, false), gui.tr("Value"));
+
+    const ImVec2 sz(gui.switch_w(), gui.switch_h());
+    const ImVec2 min(pos.x + w - 6.f * s - sz.x, IM_ROUND(cy - sz.y * 0.5f));
+    const ImRect bb(min, min + sz);
+    bool changed = false;
+    if (ImGui::IsMouseHoveringRect(bb.Min, bb.Max, true) && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        entry.bool_value = !entry.bool_value;
+        changed = true;
+    }
+    gui.draw_switch_body(draw, bb, row_anim(ImGui::GetID("##valueswitch"), entry.bool_value, 12.f));
+    return changed;
+}
+
+// Trash / eye / clone along the bottom of a bind card.
+enum class card_action { none, remove, duplicate };
+
+card_action bind_card_actions(bind_entry& entry, bool is_draft) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float s = gui.m_scale;
+    const float w = ImGui::GetContentRegionAvail().x, h = 28.f * s;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##actions", ImVec2(w, h));
+
+    const char* icons[] = { ICON_FA_TRASH_ALT,
+                            entry.show_in_overlay ? ICON_FA_EYE : ICON_FA_EYE_SLASH,
+                            ICON_FA_CLONE };
+    const char* ids[] = { "##act_del", "##act_eye", "##act_dup" };
+    const float icon_fs = 14.f * s, slot = w / 3.f;
+    card_action action = card_action::none;
+
+    for (int i = 0; i < 3; ++i) {
+        const ImRect bb(ImVec2(pos.x + slot * i, pos.y), ImVec2(pos.x + slot * (i + 1), pos.y + h));
+        // A pending bind has nothing to delete or clone yet - only the eye is live on it.
+        const bool enabled = !is_draft || i == 1;
+        const bool hovered = enabled && ImGui::IsMouseHoveringRect(bb.Min, bb.Max, true);
+        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (i == 0)
+                action = card_action::remove;
+            else if (i == 1) {
+                entry.show_in_overlay = !entry.show_in_overlay;
                 mark_dirty();
             }
+            else
+                action = card_action::duplicate;
+        }
+        const float t = row_anim(ImGui::GetID(ids[i]), hovered);
+        const ImVec4 idle = gui.text_disabled.to_vec4(enabled ? 1.f : 0.4f, false);
+        const ImVec4 hot = i == 0 ? ImVec4(0.93f, 0.33f, 0.36f, 1.f) : gui.text.to_vec4(1.f, false);
+        const ImVec2 isz = font->CalcTextSizeA(icon_fs, FLT_MAX, 0.f, icons[i]);
+        draw->AddText(font, icon_fs, ImVec2(IM_ROUND(bb.GetCenter().x - isz.x * 0.5f),
+                                            IM_ROUND(bb.GetCenter().y - isz.y * 0.5f)),
+                      mix_color(idle, hot, t), icons[i]);
+    }
+    return action;
+}
 
-            if (target.type == value_type::boolean) {
-                if (ImGui::Checkbox("Value", &entry.bool_value))
-                    mark_dirty();
-            } else if (target.type == value_type::integer) {
-                if (ImGui::SliderInt("Value", &entry.int_value, target.minimum_int, target.maximum_int))
-                    mark_dirty();
-            } else {
-                if (ImGui::SliderFloat("Value", &entry.float_value, target.minimum_float, target.maximum_float, "%.2f"))
-                    mark_dirty();
+// The card a bind row opens, anchored to the right edge of the card `parent` and level with the
+// row it belongs to, so it reads as growing out of that row.
+// Returns false once `entry` must not be touched again this frame - it was deleted, or the
+// vector behind it was reallocated by a duplicate.
+bool draw_entry_card(bind_target& target, bind_entry& entry, bool is_draft,
+                     ImGuiWindow* parent, float row_y, bool& removed, bool& committed) {
+    const float s = gui.m_scale;
+    char name[48];
+    if (is_draft)
+        ImFormatString(name, IM_ARRAYSIZE(name), "##bind_sub_draft");
+    else
+        ImFormatString(name, IM_ARRAYSIZE(name), "##bind_sub_%llu", (unsigned long long)entry.id);
+
+    const std::uint64_t latch = is_draft ? k_draft_entry : entry.id;
+    const bool open_request = g_submenu == latch && !g_submenu_opened;
+    if (open_request)
+        g_submenu_opened = true;
+
+    bool wants_open = false;
+    const float anim = gui.popup_animation(name, open_request, wants_open);
+    const ImVec2 at(parent->Pos.x + parent->Size.x + 8.f * s, row_y - 10.f * s);
+    if (!gui.begin_popup_card_at(name, wants_open, anim, at, ImVec2(0.f, 0.f), 196.f))
+        return true;
+
+    if (bind_key_row(entry))
+        mark_dirty();
+    // Has to run every frame the card is up, not only when the box was clicked: this is what
+    // actually reads the keyboard while the bind is armed.
+    const bool got_key = update_capture(entry);
+    if (bind_mode_row(entry))
+        mark_dirty();
+    if (bind_value_row(target, entry))
+        mark_dirty();
+    bind_menu_separator();
+    const card_action action = bind_card_actions(entry, is_draft);
+    gui.end_popup_card();
+
+    if (action == card_action::duplicate && !is_draft && target.entries.size() < 16) {
+        bind_entry copy = entry;
+        copy.id = g_next_entry_id++;
+        copy.toggled = copy.was_down = copy.active = false;
+        target.entries.push_back(copy);
+        request_submenu(copy.id);
+        mark_dirty();
+        return false; // `entry` points into the vector that just reallocated
+    }
+    if (action == card_action::remove && !is_draft) {
+        removed = true;
+        return false;
+    }
+    // A draft becomes a real bind the moment it is given a key. The card stays up and now belongs
+    // to that bind, which is what turns the "New Bind" row into `Toggle "N"`.
+    if (is_draft && got_key && entry.key > 0)
+        committed = true;
+    return true;
+}
+
+void draw_bind_menu(bind_target& target, const ImRect& rect, const ImRect& control) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    ImDrawList* draw = window->DrawList;
+    ImFont* font = ImGui::GetFont();
+    const float s = gui.m_scale;
+
+    ImGui::PushID(target.key.c_str());
+    const bool menu_up = ImGui::IsPopupOpen(ImGui::GetID("##bind_menu"), ImGuiPopupFlags_None);
+    const bool row_hovered = ImGui::IsMouseHoveringRect(rect.Min, rect.Max, true);
+    const bool has_binds = !target.entries.empty();
+
+    // --- the gear, in the gap left of the row's control ---
+    const float sz = 16.f * s;
+    const float right = control.Min.x - 8.f * s - gui.m_row_slot_claims * gui.row_slot_step();
+    const float top = rect.Min.y + IM_ROUND((rect.GetHeight() - sz) * 0.5f);
+    const ImRect gear(ImVec2(right - sz, top), ImVec2(right, top + sz));
+
+    // ItemAdd without ItemSize, ahead of the row's own ButtonBehavior, so the gear takes its own
+    // click instead of toggling the row it sits on (the same trick gui.row_options_begin uses).
+    const ImGuiID gear_id = ImGui::GetID("##bind_gear");
+    bool gear_clicked = false, gear_hovered = false, gear_held = false;
+    if (gear.Min.x > rect.Min.x && ImGui::ItemAdd(gear, gear_id))
+        gear_clicked = ImGui::ButtonBehavior(gear, gear_id, &gear_hovered, &gear_held);
+    IM_UNUSED(gear_held);
+
+    // A bound row always shows its gear - that is the "this row is bound" tell. An unbound one
+    // only fades it in under the cursor, so a row nobody is looking at stays clean.
+    const float show = row_anim(ImHashStr("##gearshow", 0, gear_id),
+                                has_binds || menu_up || row_hovered || gear_hovered);
+    if (show > 0.01f) {
+        const float t = row_anim(gear_id, gear_hovered || menu_up);
+        const ImVec4 idle = has_binds ? gui.accent_color.to_vec4(1.f, false)
+                                      : gui.text_disabled.to_vec4(1.f, false);
+        ImVec4 col = lerp_color(idle, gui.text.to_vec4(1.f, false), t * (has_binds ? 0.35f : 1.f));
+        col.w *= show;
+        const float glyph = sz * 0.82f;
+        const ImVec2 isz = font->CalcTextSizeA(glyph, FLT_MAX, 0.f, ICON_FA_COG);
+        draw->AddText(font, glyph, ImVec2(IM_ROUND(gear.GetCenter().x - isz.x * 0.5f),
+                                          IM_ROUND(gear.GetCenter().y - isz.y * 0.5f)),
+                      ImGui::GetColorU32(col), ICON_FA_COG);
+    }
+
+    const bool open_menu = gear_clicked || (row_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right));
+
+    bool wants_open = false;
+    const float anim = gui.popup_animation("##bind_menu", open_menu, wants_open);
+    const ImVec2 anchor(rect.Max.x + 8.f * s, rect.GetCenter().y);
+    if (gui.begin_popup_card_at("##bind_menu", wants_open, anim, anchor, ImVec2(0.f, 0.5f), 184.f)) {
+        ImGuiWindow* card = ImGui::GetCurrentWindow();
+        const ImVec4 c_text = gui.text.to_vec4(1.f, false);
+        const ImVec4 c_red(0.93f, 0.33f, 0.36f, 1.f);
+
+        // A click on one of this card's own rows lands outside the child card, which is ImGui's
+        // cue to dismiss it. Drop the latch along with it, or the row it belonged to would look
+        // inert until the cursor had visited some other row first. Tested against the card's rect
+        // rather than its hover state: the child never overlaps the parent, and hover tests on a
+        // popup with something open above it are refused. Done before the rows, so whichever one
+        // the cursor is on re-latches in the same frame.
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            ImGui::IsMouseHoveringRect(card->Pos, card->Pos + card->Size, false))
+            request_submenu(0);
+
+        if (bind_menu_row("##lua", ICON_FA_LINK, "Copy Lua Path", false, false, c_text).clicked)
+            ImGui::SetClipboardText(target.key.c_str());
+        bind_menu_separator();
+
+        int remove_index = -1;
+        bool commit_draft = false, bail = false;
+        for (int i = 0; i < static_cast<int>(target.entries.size()); ++i) {
+            bind_entry& entry = target.entries[i];
+            ImGui::PushID(static_cast<int>(entry.id));
+            const std::string label = entry_label(entry);
+            const menu_row row = bind_menu_row("##bind", ICON_FA_BOLT, label.c_str(), true,
+                                               g_submenu == entry.id, c_text);
+            if (row.hovered)
+                request_submenu(entry.id);
+            bool removed = false, ignored = false;
+            const bool alive = draw_entry_card(target, entry, false, card, row.pos.y, removed, ignored);
+            ImGui::PopID();
+            if (removed)
+                remove_index = i;
+            if (!alive) {
+                bail = true; // duplicated (vector reallocated) or deleted - leave the rest for next frame
+                break;
+            }
+        }
+
+        if (!bail) {
+            if (target.entries.size() < 16) {
+                const menu_row row = bind_menu_row("##new", ICON_FA_PLUS_CIRCLE, "New Bind", true,
+                                                   g_submenu == k_draft_entry, c_text, true);
+                if (row.hovered && g_submenu != k_draft_entry) {
+                    // A fresh pending bind, pre-filled against what the row is set to right now.
+                    g_draft = bind_entry{};
+                    g_draft.id = g_next_entry_id++;
+                    g_draft.mode = bind_mode::toggle;
+                    g_draft.bool_value = target.type == value_type::boolean ? !target.base_bool : true;
+                    g_draft.int_value = std::clamp(target.base_int, target.minimum_int, target.maximum_int);
+                    g_draft.float_value = std::clamp(target.base_float, target.minimum_float, target.maximum_float);
+                    g_draft_target = target.id;
+                    request_submenu(k_draft_entry);
+                }
+                // Submitted even when the latch has moved on, so the card gets to fade out.
+                if (g_draft_target == target.id) {
+                    bool ignored = false;
+                    draw_entry_card(target, g_draft, true, card, row.pos.y, ignored, commit_draft);
+                }
             }
 
-            if (ImGui::Button("Remove", ImVec2(-1.f, 26.f * gui.m_scale)))
-                remove_index = index;
-            ImGui::Separator();
-            ImGui::PopID();
-        }
-
-        if (remove_index >= 0) {
-            if (g_capture_entry == target.entries[remove_index].id)
-                g_capture_entry = 0;
-            target.entries.erase(target.entries.begin() + remove_index);
-            mark_dirty();
-        }
-
-        if (target.entries.size() < 16 && ImGui::Button("Add bind", ImVec2(-1.f, 30.f * gui.m_scale))) {
-            bind_entry entry{};
-            entry.id = g_next_entry_id++;
-            entry.mode = bind_mode::hold;
-            entry.bool_value = target.type == value_type::boolean ? target.base_bool : true;
-            entry.int_value = std::clamp(target.base_int, target.minimum_int, target.maximum_int);
-            entry.float_value = std::clamp(target.base_float, target.minimum_float, target.maximum_float);
-            target.entries.push_back(entry);
-            mark_dirty();
+            if (bind_menu_row("##hotkeys", ICON_FA_LIST, "Hotkeys", false, g_overlay_enabled, c_text).clicked) {
+                g_overlay_enabled = !g_overlay_enabled;
+                mark_dirty();
+            }
+            bind_menu_separator();
+            if (bind_menu_row("##reset", ICON_FA_TRASH_ALT, "Reset", false, false, c_red).clicked &&
+                has_binds) {
+                for (const bind_entry& entry : target.entries)
+                    if (g_capture_entry == entry.id)
+                        g_capture_entry = 0;
+                target.entries.clear();
+                write_base(target);
+                target.was_overridden = false;
+                request_submenu(0);
+                mark_dirty();
+                remove_index = -1;
+                commit_draft = false;
+            }
         }
 
         gui.end_popup_card();
-    } else if (!wants_open && g_capture_entry != 0) {
-        const auto capture = std::find_if(target.entries.begin(), target.entries.end(),
-            [](const bind_entry& entry) { return entry.id == g_capture_entry; });
-        if (capture != target.entries.end())
+
+        if (commit_draft) {
+            target.entries.push_back(g_draft);
+            request_submenu(g_draft.id);
+            g_draft = bind_entry{};
+            g_draft_target = 0;
+            mark_dirty();
+        }
+        else if (remove_index >= 0) {
+            if (g_capture_entry == target.entries[remove_index].id)
+                g_capture_entry = 0;
+            target.entries.erase(target.entries.begin() + remove_index);
+            request_submenu(0);
+            mark_dirty();
+        }
+    }
+    else if (!wants_open && g_capture_entry != 0) {
+        // The menu went away mid-capture (clicked elsewhere, tab switched): disarm, or the next
+        // key press would be eaten on behalf of a card nobody can see.
+        const bool mine = g_capture_entry == g_draft.id ||
+            std::any_of(target.entries.begin(), target.entries.end(),
+                        [](const bind_entry& entry) { return entry.id == g_capture_entry; });
+        if (mine)
             g_capture_entry = 0;
     }
     ImGui::PopID();
@@ -431,7 +850,7 @@ void register_float(const char* key, const char* label, float* value, float mini
 }
 
 target_id checkbox_item(ImGuiWindow* window, ImGuiID item_id, const char* label,
-                        const ImRect& rect, bool* value) {
+                        const ImRect& rect, const ImRect& control, bool* value) {
     IM_UNUSED(item_id);
     if (!value || !belongs_to_main_menu(window) ||
         (GImGui->CurrentItemFlags & ImGuiItemFlags_Disabled))
@@ -439,12 +858,12 @@ target_id checkbox_item(ImGuiWindow* window, ImGuiID item_id, const char* label,
     bind_target* target = find_registered_target(value);
     if (!target || target->type != value_type::boolean)
         return 0;
-    draw_bind_editor(*target, rect);
+    draw_bind_menu(*target, rect, control);
     return target->id;
 }
 
 target_id slider_item(ImGuiWindow* window, ImGuiID item_id, const char* label,
-                      const ImRect& rect, ImGuiDataType type, void* value,
+                      const ImRect& rect, const ImRect& control, ImGuiDataType type, void* value,
                       const void* minimum, const void* maximum) {
     IM_UNUSED(item_id);
     if (!value || !minimum || !maximum || !belongs_to_main_menu(window) ||
@@ -468,7 +887,7 @@ target_id slider_item(ImGuiWindow* window, ImGuiID item_id, const char* label,
         for (auto& entry : target->entries)
             entry.float_value = std::clamp(entry.float_value, target->minimum_float, target->maximum_float);
     }
-    draw_bind_editor(*target, rect);
+    draw_bind_menu(*target, rect, control);
     return target->id;
 }
 
@@ -579,13 +998,27 @@ bool is_capturing() {
     return g_capture_entry != 0;
 }
 
+bool overlay_enabled() {
+    return g_overlay_enabled;
+}
+
+void set_overlay_enabled(bool enabled) {
+    if (g_overlay_enabled == enabled)
+        return;
+    g_overlay_enabled = enabled;
+    mark_dirty();
+}
+
 void draw_overlay(bool menu_open) {
+    if (!g_overlay_enabled)
+        return;
+
     struct active_row { std::string label; std::string binding; };
     std::vector<active_row> rows;
     for (const auto& [id, target] : g_targets) {
         const bind_entry* winner = nullptr;
         for (const auto& entry : target.entries)
-            if (entry.active)
+            if (entry.active && entry.show_in_overlay)
                 winner = &entry;
         if (!winner)
             continue;

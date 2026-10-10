@@ -58,6 +58,13 @@ public:
     int m_tab = 0;
     float m_scale = 1.0f;
 
+    // How many widgets already own the slot just left of the row's control (the colour swatch,
+    // the "..." options button). row_begin() clears it and each claimant bumps it *before* the
+    // row's Checkbox/Slider runs, so the bind gear drawn from inside that widget can step one
+    // slot further left instead of landing on top of them.
+    int m_row_slot_claims = 0;
+    float row_slot_step( ) const { return 22.f * m_scale; }
+
     color_t accent_color = { 0.318f, 0.486f, 0.992f, 1.f }; // old one
     //color_t accent_color = { 0.604f, 0.596f, 0.788f, 1.f }; // neverlose v4
 
