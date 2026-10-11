@@ -377,8 +377,8 @@ void c_menu::draw_rage() {
     gui.row_begin();
     if (gui.row_options_begin("##enable_opts", 250.f, c_gui::row_control::toggle)) {
         gui.row_checkbox("Silent", &rage.m_silent);
-        gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
         gui.row_checkbox("Backtrack", &cfg.m_backtrack);
+        gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
         gui.row_options_end();
     }
     gui.row_checkbox("Enabled", &rage.m_enabled);

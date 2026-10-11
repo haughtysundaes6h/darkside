@@ -440,6 +440,7 @@ private:
     bool    m_force_measure = false; // grid_box(): re-measure content even though a concrete (clamped) height was passed
     bool    m_row_started = false;   // row_checkbox()/row_sub_menu(): false until the first row in this box is drawn
     std::vector<bool> m_row_started_stack; // saved across begin/end_popup_card(): a card's rows are their own run
+    int     m_no_separator_depth = 0; // >0 inside an options-gear card: row_begin() draws no dividers there
 
     // popup_section_begin()/end() state for the currently open section
     ImVec2 m_popup_section_pos{};

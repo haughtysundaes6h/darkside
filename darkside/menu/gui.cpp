@@ -451,7 +451,7 @@ void c_gui::row_begin() {
     // between the gear and its own widget and forget the claim, so the label would run under it.
     if ( m_row_slot_claims > 0 )
         return;
-    if ( m_row_started ) Separator( );
+    if ( m_row_started && m_no_separator_depth == 0 ) Separator( );
     m_row_started = true;
     m_row_slot_claims = 0; // a fresh row: nothing owns the slot left of its control yet
 }
@@ -1175,6 +1175,7 @@ bool c_gui::row_options_begin( const char* id, float width, row_control control 
         // A gear card is just stacked rows, so give them a vertical gap - otherwise several
         // controls pile up with no breathing room. Popped in row_options_end().
         ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 0.f, 7.f * s ) );
+        ++m_no_separator_depth; // no dividers between a gear card's rows (restored in row_options_end)
         return true; // PopID + PopStyleVar in row_options_end()
     }
     ImGui::PopID( );
@@ -1182,6 +1183,7 @@ bool c_gui::row_options_begin( const char* id, float width, row_control control 
 }
 
 void c_gui::row_options_end( ) {
+    --m_no_separator_depth;
     ImGui::PopStyleVar( ); // the ItemSpacing pushed in row_options_begin()
     end_popup_card( );
     ImGui::PopID( );
