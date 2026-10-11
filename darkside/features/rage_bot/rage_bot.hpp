@@ -1,10 +1,11 @@
 #pragma once
 
 #include "../../darkside.hpp"
+#include "../../valve/andromeda_patterns.hpp"
 #include "../auto_wall/auto_wall.hpp"
 #include "../eng_pred/eng_pred.hpp"
 
-struct lag_record_t 
+struct lag_record_t
 {
 	vec3_t m_origin{};
 	c_cs_player_pawn* m_pawn{};
@@ -21,7 +22,7 @@ struct lag_record_t
 
 	lag_record_t() = default;
 
-	void store(c_cs_player_pawn* pawn) 
+	void store(c_cs_player_pawn* pawn)
 	{
 		if (!pawn || !pawn->is_player_pawn() || !pawn->is_alive())
 			return;
@@ -80,7 +81,7 @@ struct lag_record_t
 		std::memcpy(bones, m_bone_data, sizeof(c_bone_data) * count);
 	}
 
-	void reset(c_cs_player_pawn* pawn) 
+	void reset(c_cs_player_pawn* pawn)
 	{
 		if (!pawn || !pawn->is_player_pawn() || !pawn->is_alive())
 			return;
@@ -101,7 +102,31 @@ struct lag_record_t
 		std::memcpy(bones, m_bone_data_backup, sizeof(c_bone_data) * count);
 	}
 
-	bool is_valid() 
+	// Экстраполяция: двигаем все кости/о origin вперёд по скорости на N тиков.
+	// Кости в CS2 хранятся в мировых координатах, поэтому достаточно сдвига.
+	void extrapolate(int ticks)
+	{
+		if (ticks <= 0 || !std::isfinite(m_simulation_time))
+			return;
+
+		const vec3_t velocity = m_vec_velocity;
+		if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z))
+			return;
+
+		const float delta_time = TICKS_TO_TIME(ticks);
+		const vec3_t shift = velocity * delta_time;
+
+		m_origin = m_origin + shift;
+		m_vec_mins = m_vec_mins + shift;
+		m_vec_maxs = m_vec_maxs + shift;
+		m_simulation_time += delta_time;
+
+		for (int i = 0; i < m_stored_bone_count; ++i) {
+			m_bone_data[i].m_pos = m_bone_data[i].m_pos + shift;
+		}
+	}
+
+	bool is_valid()
 	{
 		const auto* local = g_prediction->get_local_data();
 		if (!local || !std::isfinite(m_simulation_time))
@@ -138,6 +163,10 @@ struct aim_point_t
 	vec3_t m_point{};
 	int m_hitbox{};
 	bool m_center{};
+
+	// заполняется при сканировании
+	float m_damage{ 0.f };
+	bool m_penetrated{ false };
 };
 
 struct aim_target_t
@@ -167,12 +196,30 @@ struct aim_target_t
 	}
 };
 
-class c_rage_bot 
+// Auto-stop options structure
+struct auto_stop_options_t {
+	bool m_enabled = false;
+	bool m_early = false;
+	bool m_full = true;
+	bool m_between = false;
+	bool m_air = false;
+	bool m_duck = false;
+	bool m_no_spread = false;
+};
+
+class c_rage_bot
 {
 	std::vector<int> m_hitboxes;
 	std::unordered_map<int, std::deque<lag_record_t>> m_lag_records{};
 	std::unordered_map<int, aim_target_t> m_aim_targets{};
 	aim_target_t* m_best_target{};
+
+	// Активная запись этого тика (копия с экстраполяцией, если включена) —
+	// используется в скане точек, хитшансе и бектрек-интерполяции
+	lag_record_t m_active_record{};
+
+	// Направление взгляда для FOV-фильтра (заполняется в select_target)
+	vec3_t m_fov_dir{};
 
 	int get_hitbox_from_menu(int hitbox)
 	{
@@ -206,7 +253,7 @@ class c_rage_bot
 		return -1;
 	}
 
-	hitbox_data_t get_hitbox_data(c_cs_player_pawn* player_pawn, const int hitbox_id)
+	hitbox_data_t get_hitbox_data(c_cs_player_pawn* player_pawn, const int hitbox_id, const lag_record_t* record = nullptr)
 	{
 		if (!player_pawn)
 			return hitbox_data_t();
@@ -231,9 +278,6 @@ class c_rage_bot
 		const auto bone_index = player_pawn->get_bone_index(hitbox_data->m_bone_name);
 		if (bone_index < 0 || bone_index >= 128 || bone_index >= model_state.get_bone_count())
 			return hitbox_data_t();
-		const auto bones = model_state.get_bone_data();
-		if (!bones)
-			return hitbox_data_t();
 
 		hitbox_data_t hitbox;
 		hitbox.m_num_hitbox = hitbox_id;
@@ -241,10 +285,21 @@ class c_rage_bot
 		hitbox.m_hitbox_data = hitbox_data;
 		hitbox.m_radius = hitbox_data->m_shape_radius;
 		hitbox.m_num_hitgroup = hitbox_data->m_hitgroup;
-		hitbox.m_matrix = g_math->transform_to_matrix(bones[bone_index]);
 		hitbox.m_mins = hitbox_data->m_vec_min;
 		hitbox.m_maxs = hitbox_data->m_vec_maxs;
 		hitbox.m_invalid_data = false;
+
+		// Матрица из записи (бектрек/экстраполяция), если запись жива
+		if (record && record->m_stored_bone_count > bone_index) {
+			hitbox.m_matrix = g_math->transform_to_matrix(
+				const_cast<c_bone_data&>(record->m_bone_data[bone_index]));
+		}
+		else {
+			const auto bones = model_state.get_bone_data();
+			if (!bones)
+				return hitbox_data_t();
+			hitbox.m_matrix = g_math->transform_to_matrix(bones[bone_index]);
+		}
 
 		return hitbox;
 	}
@@ -253,7 +308,8 @@ class c_rage_bot
 	{
 		using fnUpdateAnimPunch = void(__fastcall*)(void*, vec3_t*, bool);
 		static fnUpdateAnimPunch fn = reinterpret_cast<fnUpdateAnimPunch>(
-			g_opcodes->scan_absolute(g_modules->m_modules.client_dll.get_name(), xorstr_("E8 ? ? ? ? 4C 8B C0 48 8D 55 ? 48 8B CB E8 ? ? ? ? 48 8D 0D"), 0x1));
+			g_opcodes->scan_absolute(g_modules->m_modules.client_dll.get_name(),
+				andromeda::get_removed_aim_punch, 0x1));
 
 		vec3_t aim_punch = {};
 		if (fn)
@@ -262,42 +318,45 @@ class c_rage_bot
 	}
 
 	void store_hitboxes();
-	lag_record_t* select_record(int handle);
+	lag_record_t* select_record(int handle, int min_damage);
+	float quick_score_record(lag_record_t* record, vec3_t shoot_pos, bool is_taser);
 	void find_targets();
-	float calc_point_scale(vec3_t& point, const float& hitbox_radius);
+	float calc_point_scale(const vec3_t& point, float hitbox_radius);
 	vec3_t transform_point(matrix3x4_t matrix, vec3_t point);
 	std::vector<vec3_t> calculate_sphere_points(float radius, int num_points);
-	std::vector<vec3_t> calculate_points(int num_points, float radius, float height, matrix3x4_t matrix, hitbox_data_t hitbox);
+	std::vector<vec3_t> calculate_capsule_points(float radius, matrix3x4_t matrix, hitbox_data_t hitbox, int rings, int per_ring);
 	bool multi_points(lag_record_t* record, int hitbox, std::vector<aim_point_t>& points);
 	aim_point_t select_points(lag_record_t* record, float& damage);
 	void select_target();
+	bool ray_intersects_capsule(const vec3_t& start, const vec3_t& dir_normalized, const vec3_t& cap_a, const vec3_t& cap_b, float radius, float max_dist);
+	bool ray_hits_hitboxes(const vec3_t& start, const vec3_t& dir_normalized, lag_record_t* record, float max_dist);
 	bool weapon_is_at_max_accuracy(c_cs_weapon_base_v_data* weapon_data, float inaccuracy);
 	vec3_t calculate_spread_angles(vec3_t angle, int random_seed, float weapon_inaccuarcy, float weapon_spread);
 	int calculate_hit_chance(c_cs_player_pawn* pawn, vec3_t angles, c_base_player_weapon* active_weapon, c_cs_weapon_base_v_data* weapon_data, bool no_spread);
 	void process_backtrack(lag_record_t* record);
 	bool can_shoot(c_cs_player_pawn* pawn, c_base_player_weapon* active_weapon);
 	void process_attack(c_user_cmd* user_cmd, vec3_t angle);
-	
+
 	// Get weapon config based on current weapon
 	c_config_system::weapon_config_t& get_current_weapon_config() {
 		if (!g_ctx->m_local_pawn)
 			return g_cfg->rage_bot.m_weapon_config[WEAPON_GROUP_GENERAL];
-		
+
 		auto* weapon = g_ctx->m_local_pawn->get_active_weapon();
 		if (!weapon)
 			return g_cfg->rage_bot.m_weapon_config[WEAPON_GROUP_GENERAL];
-		
+
 		auto* weapon_data = weapon->get_weapon_data();
 		if (!weapon_data)
 			return g_cfg->rage_bot.m_weapon_config[WEAPON_GROUP_GENERAL];
-		
+
 		int weapon_type = weapon_data->m_weapon_type();
 		int item_def = weapon->get_item_def_index();
-		
+
 		weapon_group_t group = c_config_system::get_weapon_group(weapon_type, item_def);
 		return g_cfg->rage_bot.get_weapon_config(static_cast<int>(group));
 	}
-	
+
 public:
 
 	void store_records();

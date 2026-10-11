@@ -253,18 +253,20 @@ void c_movement::movement_fix(c_user_cmd* user_cmd, vec3_t original_angles) {
 // ============================================================================
 
 void c_movement::auto_stop(c_user_cmd* user_cmd, c_cs_player_pawn* local_player, 
-                           c_base_player_weapon* weapon, bool no_spread, bool enabled) {
-    if (!enabled || no_spread)
+                           c_base_player_weapon* weapon, const auto_stop_options_t& options) {
+    if (!options.m_enabled || options.m_no_spread)
         return;
     
     if (!user_cmd || !local_player || !weapon || !user_cmd->pb.has_base())
         return;
     
-    // Только на земле
-    if (!(local_player->m_flags() & FL_ONGROUND))
+    const bool on_ground = (local_player->m_flags() & FL_ONGROUND) != 0;
+    
+    // Air: по умолчанию стоп только на земле; с режимом Air — всегда.
+    if (!on_ground && !options.m_air)
         return;
     
-    // Убираем shift
+    // Убираем shift (влияет на инаккураси в движении)
     auto remove_button = [&](int button) {
         user_cmd->m_button_state.m_button_state &= ~button;
         user_cmd->m_button_state.m_button_state2 &= ~button;
@@ -273,10 +275,29 @@ void c_movement::auto_stop(c_user_cmd* user_cmd, c_cs_player_pawn* local_player,
     
     remove_button(IN_SPEED);
     
-    // Максимальная скорость для попадания (33.34% от max speed)
-    float wish_speed = weapon->get_max_speed() * 0.34f;
+    const float weapon_speed = weapon->get_max_speed();
+    if (!std::isfinite(weapon_speed) || weapon_speed <= 0.f)
+        return;
+    
+    // Ни один режим не выбран (или Between вне окна кулдауна) — не мешаем движению
+    if (!options.m_full && !options.m_early && !options.m_between)
+        return;
+    
+    // Порог торможения:
+    //  - Full Stop: тормоз в ноль (полный контр-страйф);
+    //  - Early: 34% max speed — порог точности большинства стволов;
+    //  - только Between: полный стоп, но rage_bot отдаёт флаг лишь в окне
+    //    между выстрелами, вне окна мы сюда уже не дошли.
+    const float wish_speed = options.m_early ? weapon_speed * 0.34f : 0.f;
     
     limit_speed(user_cmd, local_player, weapon, wish_speed);
+    
+    // Duck: приседаем на торможении (инаккараси ниже, хитбокс ниже)
+    if (options.m_duck) {
+        user_cmd->m_button_state.m_button_state |= IN_DUCK;
+        user_cmd->m_button_state.m_button_state2 |= IN_DUCK;
+        user_cmd->m_button_state.m_button_state3 |= IN_DUCK;
+    }
 }
 
 // ============================================================================

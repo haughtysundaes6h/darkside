@@ -232,7 +232,8 @@ void __fastcall hooks::create_move::hk_create_move(i_csgo_input* rcx, int slot, 
 	const vec3_t aim_movement_angles{user_cmd->pb.base().viewangles().x(),
 		user_cmd->pb.base().viewangles().y(), user_cmd->pb.base().viewangles().z()};
 
-	if (!g_menu->blocks_attacks()) {
+	// ФИКС: Вызываем rage_bot только когда меню закрыто
+	if (!g_menu->m_opened) {
 		g_rage_bot->on_create_move();
 	}
 

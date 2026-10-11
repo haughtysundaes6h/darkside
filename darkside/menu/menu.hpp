@@ -13,8 +13,18 @@ public:
     void draw();
     void toggle() { m_opened = !m_opened; }
     bool is_opened() const { return m_opened; }
-    bool blocks_attacks() const { return m_block_attack_until_release; }
-    void on_create_move() { }
+    // ФИКС: Блокируем атаки только когда меню открыто ИЛИ ждём отпускания кнопки
+    bool blocks_attacks() const { return m_opened || m_block_attack_until_release; }
+    void on_create_move() { 
+        // Сбрасываем блокировку когда меню закрыто и кнопки не нажаты
+        if (!m_opened && m_block_attack_until_release) {
+            if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
+                !(GetAsyncKeyState(VK_RBUTTON) & 0x8000) &&
+                !(GetAsyncKeyState(VK_MBUTTON) & 0x8000)) {
+                m_block_attack_until_release = false;
+            }
+        }
+    }
 
     c_gui& ui() { return ::gui; }
 

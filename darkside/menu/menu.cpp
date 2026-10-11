@@ -441,8 +441,10 @@ void c_menu::draw_rage() {
     // Multipoint (gear: Head Scale / Body Scale)
     gui.row_begin();
     if (gui.row_options_begin("##multipoint_opts", 250.f, c_gui::row_control::box)) {
-        gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
-        gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%");
+        gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, -1, 100, 
+            cfg.m_head_scale == -1 ? "Auto" : "%d%%");
+        gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_body_scale, -1, 100,
+            cfg.m_body_scale == -1 ? "Auto" : "%d%%");
         gui.row_options_end();
     }
     gui.row_multibox("Multipoint", hitbox_names, cfg.m_multi_points, 6, "Select multipoint locations.");
@@ -453,7 +455,8 @@ void c_menu::draw_rage() {
         gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
         gui.row_options_end();
     }
-    gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
+    gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, -1, 100, 
+        cfg.m_hit_chance == -1 ? "Auto" : "%d%%");
 
     // Min. Damage (gear: Delay Shot)
     gui.row_begin();
@@ -461,7 +464,8 @@ void c_menu::draw_rage() {
         gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
         gui.row_options_end();
     }
-    gui.row_begin(); ImGui::SliderInt("Min. Damage", &cfg.m_minimum_damage, 0, 120);
+    gui.row_begin(); ImGui::SliderInt("Min. Damage", &cfg.m_minimum_damage, -1, 120,
+        cfg.m_minimum_damage == -1 ? "Auto" : "%d");
 
     gui.row_checkbox("Penetrate Walls", &cfg.m_penetration);
     gui.end_group_box();

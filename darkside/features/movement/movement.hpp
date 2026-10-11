@@ -2,6 +2,7 @@
 
 #include "../protobufs/protobufs.hpp"
 #include "movement_math.hpp"
+#include "../rage_bot/rage_bot.hpp"
 
 // ============================================================================
 // CS2 MOVEMENT SYSTEM v2.1
@@ -51,7 +52,7 @@ public:
     // RAGE FEATURES
     // ========================================================================
     void auto_stop(c_user_cmd* user_cmd, c_cs_player_pawn* local_player, 
-                   c_base_player_weapon* weapon, bool no_spread, bool enabled);
+                   c_base_player_weapon* weapon, const auto_stop_options_t& options);
     void slow_walk(c_user_cmd* user_cmd, float speed_percent);
     
     // ========================================================================
