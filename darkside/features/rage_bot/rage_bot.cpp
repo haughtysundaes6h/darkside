@@ -497,15 +497,22 @@ bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_
 
 	vec3_t mins = data.m_mins;
 	vec3_t maxs = data.m_maxs;
-	vec3_t center = (mins + maxs) * 0.5f;
+	vec3_t center{
+		(mins.x + maxs.x) * 0.5f,
+		(mins.y + maxs.y) * 0.5f,
+		(mins.z + maxs.z) * 0.5f
+	};
 	vec3_t world{};
 	g_math->vector_transform(center, data.m_matrix, world);
 
 	if (hitbox == HITBOX_HEAD && resolver_side != 0 && data.m_radius > 0.f) {
 		vec3_t lateral{ data.m_matrix[0][1], data.m_matrix[1][1], data.m_matrix[2][1] };
-		if (lateral.length() > 0.01f) {
-			lateral = lateral.normalize();
-			world = world + lateral * (data.m_radius * 0.45f * static_cast<float>(resolver_side));
+		const float lat_len = std::sqrt(lateral.x * lateral.x + lateral.y * lateral.y + lateral.z * lateral.z);
+		if (lat_len > 0.01f) {
+			const float shift = data.m_radius * 0.45f * static_cast<float>(resolver_side) / lat_len;
+			world.x += lateral.x * shift;
+			world.y += lateral.y * shift;
+			world.z += lateral.z * shift;
 		}
 	}
 	points.emplace_back(world, hitbox, true);
@@ -517,80 +524,100 @@ bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_
 	float scale = hitbox == HITBOX_HEAD ? static_cast<float>(cfg.m_head_scale) : static_cast<float>(cfg.m_body_scale);
 	if (scale < 0.f)
 		scale = point_scale(world, data.m_radius, inaccuracy, spread);
-	const float radius = data.m_radius * (scale / 100.f);
-	if (radius <= 0.05f)
+	scale = clampf(scale, 0.f, 100.f);
+	const float radius = data.m_radius > 0.1f ? data.m_radius : 2.f;
+	if (scale <= 1.f)
 		return true;
 
 	const auto* local = g_prediction->get_local_data();
 	if (!local)
 		return true;
 
-	// Camera basis: +forward is the surface facing the player. That is the
-	// point you can actually shoot (back of the head on a turned/crouched bot),
-	// not a far-side offset that only exists to satisfy the scan.
+	// Full capsule shell in bone space, then the bone matrix. Pitch/yaw rotate
+	// the head, so chin, crown, ears and occiput stay on the real surface
+	// instead of a camera-facing triangle that only exists at pitch 0 / up.
+	const float scale_f = scale / 100.f;
+	const float abx = maxs.x - mins.x, aby = maxs.y - mins.y, abz = maxs.z - mins.z;
+	const float axis_len = std::sqrt(abx * abx + aby * aby + abz * abz);
+	const float reach = axis_len * 0.5f + radius + 0.5f;
+
+	auto dist_segment = [&](float px, float py, float pz) {
+		float t = 0.f;
+		const float ab2 = axis_len * axis_len;
+		if (ab2 > 1e-6f)
+			t = clampf(((px - mins.x) * abx + (py - mins.y) * aby + (pz - mins.z) * abz) / ab2, 0.f, 1.f);
+		const float dx = px - (mins.x + abx * t);
+		const float dy = py - (mins.y + aby * t);
+		const float dz = pz - (mins.z + abz * t);
+		return std::sqrt(dx * dx + dy * dy + dz * dz);
+	};
+	auto emit_dir = [&](float dx, float dy, float dz) {
+		const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+		if (len < 1e-4f)
+			return;
+		dx /= len; dy /= len; dz /= len;
+		float lo = 0.f, hi = reach;
+		for (int i = 0; i < 14; ++i) {
+			const float mid = (lo + hi) * 0.5f;
+			const float px = center.x + dx * mid;
+			const float py = center.y + dy * mid;
+			const float pz = center.z + dz * mid;
+			if (dist_segment(px, py, pz) < radius)
+				lo = mid;
+			else
+				hi = mid;
+		}
+		vec3_t local{
+			center.x + dx * hi * scale_f,
+			center.y + dy * hi * scale_f,
+			center.z + dz * hi * scale_f
+		};
+		vec3_t shell{};
+		g_math->vector_transform(local, data.m_matrix, shell);
+		points.emplace_back(shell, hitbox, false);
+	};
+
+	// Bone axes and the diagonals between them: face, occiput, both ears, chin,
+	// crown, and every corner. Not a camera triangle. The matrix rotates the
+	// whole shell with anti-aim pitch.
+	const float faces[6][3] = {
+		{ 1.f, 0.f, 0.f }, { -1.f, 0.f, 0.f },
+		{ 0.f, 1.f, 0.f }, { 0.f, -1.f, 0.f },
+		{ 0.f, 0.f, 1.f }, { 0.f, 0.f, -1.f }
+	};
+	for (const auto& dir : faces)
+		emit_dir(dir[0], dir[1], dir[2]);
+	if (hitbox == HITBOX_HEAD) {
+		const float edges[12][3] = {
+			{ 1.f, 1.f, 0.f }, { 1.f, -1.f, 0.f }, { -1.f, 1.f, 0.f }, { -1.f, -1.f, 0.f },
+			{ 1.f, 0.f, 1.f }, { 1.f, 0.f, -1.f }, { -1.f, 0.f, 1.f }, { -1.f, 0.f, -1.f },
+			{ 0.f, 1.f, 1.f }, { 0.f, 1.f, -1.f }, { 0.f, -1.f, 1.f }, { 0.f, -1.f, -1.f }
+		};
+		const float corners[8][3] = {
+			{ 1.f, 1.f, 1.f }, { 1.f, 1.f, -1.f }, { 1.f, -1.f, 1.f }, { 1.f, -1.f, -1.f },
+			{ -1.f, 1.f, 1.f }, { -1.f, 1.f, -1.f }, { -1.f, -1.f, 1.f }, { -1.f, -1.f, -1.f }
+		};
+		for (const auto& dir : edges)
+			emit_dir(dir[0], dir[1], dir[2]);
+		for (const auto& dir : corners)
+			emit_dir(dir[0], dir[1], dir[2]);
+	}
+	// Capsule ends explicitly: on a long hitbox these are the poles the sphere grid can miss.
+	if (axis_len > 0.05f) {
+		emit_dir(-abx, -aby, -abz);
+		emit_dir(abx, aby, abz);
+	}
+
+	// Near shell toward the camera, so a fully exposed face still has a high-hitchance point.
 	vec3_t to_cam{
 		local->m_eye_pos.x - world.x,
 		local->m_eye_pos.y - world.y,
 		local->m_eye_pos.z - world.z
 	};
-	const float to_len = std::sqrt(to_cam.x * to_cam.x + to_cam.y * to_cam.y + to_cam.z * to_cam.z);
-	if (to_len < 1.f)
-		return true;
-	vec3_t forward{ to_cam.x / to_len, to_cam.y / to_len, to_cam.z / to_len };
-	vec3_t world_up{ 0.f, 0.f, 1.f };
-	vec3_t right{
-		world_up.y * forward.z - world_up.z * forward.y,
-		world_up.z * forward.x - world_up.x * forward.z,
-		world_up.x * forward.y - world_up.y * forward.x
-	};
-	float right_len = std::sqrt(right.x * right.x + right.y * right.y + right.z * right.z);
-	if (right_len < 0.01f) {
-		right = { 1.f, 0.f, 0.f };
-		right_len = 1.f;
-	}
-	right.x /= right_len; right.y /= right_len; right.z /= right_len;
-	vec3_t up{
-		right.y * forward.z - right.z * forward.y,
-		right.z * forward.x - right.x * forward.z,
-		right.x * forward.y - right.y * forward.x
-	};
-
-	auto push = [&](float fx, float rx, float ux) {
-		points.emplace_back(vec3_t{
-			world.x + forward.x * fx + right.x * rx + up.x * ux,
-			world.y + forward.y * fx + right.y * rx + up.y * ux,
-			world.z + forward.z * fx + right.z * rx + up.z * ux
-		}, hitbox, false);
-	};
-
-	// Near face first: crouched occiput / exposed shell at scale 100.
-	push(radius, 0.f, 0.f);
-	push(radius * 0.72f, 0.f, radius * 0.62f);
-	push(radius * 0.55f, 0.f, radius * 0.9f);
-	push(radius * 0.7f, radius * 0.62f, radius * 0.25f);
-	push(radius * 0.7f, -radius * 0.62f, radius * 0.25f);
-	push(radius * 0.45f, radius * 0.85f, 0.f);
-	push(radius * 0.45f, -radius * 0.85f, 0.f);
-	if (hitbox == HITBOX_HEAD) {
-		push(radius * 0.8f, 0.f, -radius * 0.35f);
-		return true;
-	}
-
-	if (menu == 1 || menu == 2)
-		push(radius * 0.65f, 0.f, -radius * 0.4f);
-	vec3_t cap_a{}, cap_b{};
-	g_math->vector_transform(data.m_mins, data.m_matrix, cap_a);
-	g_math->vector_transform(data.m_maxs, data.m_matrix, cap_b);
-	auto toward_cam = [&](const vec3_t& end) {
-		const float dx = end.x - world.x;
-		const float dy = end.y - world.y;
-		const float dz = end.z - world.z;
-		return dx * forward.x + dy * forward.y + dz * forward.z > 0.f;
-	};
-	if (toward_cam(cap_a))
-		points.emplace_back(cap_a, hitbox, false);
-	if (toward_cam(cap_b))
-		points.emplace_back(cap_b, hitbox, false);
+	const float cam_x = to_cam.x * data.m_matrix[0][0] + to_cam.y * data.m_matrix[1][0] + to_cam.z * data.m_matrix[2][0];
+	const float cam_y = to_cam.x * data.m_matrix[0][1] + to_cam.y * data.m_matrix[1][1] + to_cam.z * data.m_matrix[2][1];
+	const float cam_z = to_cam.x * data.m_matrix[0][2] + to_cam.y * data.m_matrix[1][2] + to_cam.z * data.m_matrix[2][2];
+	emit_dir(cam_x, cam_y, cam_z);
 	return true;
 }
 
@@ -858,9 +885,10 @@ int c_rage_bot::capsule_hit(const rage_capsule_t* caps, int count, const vec3_t&
 			first = caps[i].m_hitbox;
 		}
 	}
-	// Overlapping capsules (chest/stomach) can be a fraction closer. An arm
-	// actually in front is several units closer and must still win.
-	if (prefer >= 0 && prefer_t >= 0.f && prefer_t <= first_t + 1.5f) {
+	// Chest/stomach overlap. The head does not get that slack: a pitched-down
+	// center sits in the chest, and calling that a headshot hides the real crown.
+	const float tie = prefer == HITBOX_HEAD ? 0.35f : 1.5f;
+	if (prefer >= 0 && prefer_t >= 0.f && prefer_t <= first_t + tie) {
 		entry = prefer_t;
 		return prefer;
 	}
