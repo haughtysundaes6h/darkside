@@ -102,8 +102,9 @@ struct lag_record_t
 		std::memcpy(bones, m_bone_data_backup, sizeof(c_bone_data) * count);
 	}
 
-	// Экстраполяция: двигаем все кости/о origin вперёд по скорости на N тиков.
+	// Экстраполяция: двигаем все кости/origin вперёд по скорости на N тиков.
 	// Кости в CS2 хранятся в мировых координатах, поэтому достаточно сдвига.
+	// УЛУЧШЕННАЯ ВЕРСИЯ: учитывает гравитацию и трение для точного предикта
 	void extrapolate(int ticks)
 	{
 		if (ticks <= 0 || !std::isfinite(m_simulation_time))
@@ -114,15 +115,53 @@ struct lag_record_t
 			return;
 
 		const float delta_time = TICKS_TO_TIME(ticks);
-		vec3_t shift = velocity * delta_time;
+		
+		// Получаем гравитацию
+		static auto sv_gravity = g_interfaces->m_var->get_by_name("sv_gravity");
+		const float gravity = (sv_gravity && sv_gravity->get_float() > 0.f) ? sv_gravity->get_float() : 800.f;
+		
+		// Проверяем флаги (на земле/в воздухе)
+		bool is_on_ground = m_pawn ? (m_pawn->m_flags() & FL_ONGROUND) != 0 : false;
+		
+		vec3_t predicted_velocity = velocity;
+		vec3_t total_shift = vec3_t(0.f, 0.f, 0.f);
+		
+		// Покадровая экстраполяция для точности
+		for (int tick = 0; tick < ticks; ++tick) {
+			vec3_t tick_shift = predicted_velocity * INTERVAL_PER_TICK;
+			
+			// Применяем гравитацию если в воздухе
+			if (!is_on_ground) {
+				predicted_velocity.z -= gravity * INTERVAL_PER_TICK;
+				
+				// Трение воздуха (air resistance)
+				const float air_friction = 0.99f; // CS2 примерное значение
+				predicted_velocity.x *= air_friction;
+				predicted_velocity.y *= air_friction;
+			}
+			else {
+				// Трение земли
+				const float speed_2d = std::sqrt(predicted_velocity.x * predicted_velocity.x + 
+				                                   predicted_velocity.y * predicted_velocity.y);
+				if (speed_2d > 0.f) {
+					const float friction = 0.96f; // CS2 ground friction
+					const float new_speed = std::max(0.f, speed_2d * friction);
+					const float ratio = new_speed / speed_2d;
+					predicted_velocity.x *= ratio;
+					predicted_velocity.y *= ratio;
+				}
+			}
+			
+			total_shift = total_shift + tick_shift;
+		}
 
-		m_origin = m_origin + shift;
-		m_vec_mins = m_vec_mins + shift;
-		m_vec_maxs = m_vec_maxs + shift;
+		m_origin = m_origin + total_shift;
+		m_vec_mins = m_vec_mins + total_shift;
+		m_vec_maxs = m_vec_maxs + total_shift;
 		m_simulation_time += delta_time;
 
 		for (int i = 0; i < m_stored_bone_count; ++i) {
-			m_bone_data[i].m_pos = m_bone_data[i].m_pos + shift;
+			m_bone_data[i].m_pos = m_bone_data[i].m_pos + total_shift;
 		}
 	}
 
@@ -132,7 +171,20 @@ struct lag_record_t
 		if (!local || !std::isfinite(m_simulation_time))
 			return false;
 		const float dead_time = (local->m_tick_base * INTERVAL_PER_TICK) - m_simulation_time;
-		return std::isfinite(dead_time) && dead_time >= -0.2f && dead_time < 0.2f;
+		
+		// ИСПРАВЛЕНИЕ #7: Проверяем breaking lag compensation
+		// Если запись слишком старая или будущая - невалидна
+		if (!std::isfinite(dead_time) || dead_time < -0.2f || dead_time > 0.2f)
+			return false;
+			
+		// Проверяем что скорость в норме (не телепорт/багованная запись)
+		if (std::isfinite(m_vec_velocity.x) && std::isfinite(m_vec_velocity.y) && std::isfinite(m_vec_velocity.z)) {
+			const float speed = m_vec_velocity.length();
+			if (speed > 5000.f) // Телепорт или баг
+				return false;
+		}
+		
+		return true;
 	}
 };
 

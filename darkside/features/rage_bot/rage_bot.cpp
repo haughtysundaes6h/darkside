@@ -200,10 +200,29 @@ lag_record_t* c_rage_bot::select_record(int handle, int min_damage)
 	float best_score = -1.f;
 	int checked = 0;
 
+	// ИСПРАВЛЕНИЕ #8: Более строгий отбор записей с учетом позиции
+	lag_record_t* prev_record = nullptr;
 	for (auto& record : records)
 	{
 		if (!record.m_pawn || record.m_stored_bone_count <= 0 || !record.is_valid())
 			continue;
+
+		// Проверяем на телепорт/багованное движение между записями
+		if (prev_record && std::isfinite(prev_record->m_simulation_time) && 
+		    std::isfinite(record.m_simulation_time)) {
+			const float time_delta = prev_record->m_simulation_time - record.m_simulation_time;
+			const vec3_t pos_delta = prev_record->m_origin - record.m_origin;
+			const float distance = pos_delta.length();
+			
+			// Если дистанция слишком большая для временного промежутка - пропускаем
+			if (time_delta > 0.001f) {
+				const float max_possible_dist = 5000.f * time_delta; // Макс. скорость * время
+				if (distance > max_possible_dist) {
+					// Телепорт/лаг - пропускаем эту запись
+					continue;
+				}
+			}
+		}
 
 		if (!newest_valid)
 			newest_valid = &record;
@@ -220,6 +239,8 @@ lag_record_t* c_rage_bot::select_record(int handle, int min_damage)
 
 		if (score >= static_cast<float>(record.m_pawn->m_health()))
 			break;
+			
+		prev_record = &record;
 	}
 
 	if (best && best_score >= static_cast<float>(min_damage))
@@ -738,21 +759,31 @@ bool c_rage_bot::weapon_is_at_max_accuracy(c_cs_weapon_base_v_data* weapon_data,
 	constexpr auto round_accuracy = [](float accuracy) { return floorf(accuracy * 170.f) / 170.f; };
 	constexpr auto round_duck_accuracy = [](float accuracy) { return floorf(accuracy * 300.f) / 300.f; };
 
-	float speed = g_ctx->m_local_pawn->m_vec_abs_velocity().length();
+	float speed = g_ctx->m_local_pawn->m_vec_abs_velocity().length_2d();
+	
+	// ИСПРАВЛЕНИЕ #6: Проверяем флаги более точно
+	bool is_on_ground = (g_ctx->m_local_pawn->m_flags() & FL_ONGROUND) != 0;
+	bool is_in_air = !is_on_ground;
 
 	bool is_scoped = ((weapon_data->m_weapon_type() == WEAPONTYPE_SNIPER_RIFLE)
-		&& !(g_ctx->m_user_cmd->m_button_state.m_button_state & IN_ZOOM)
-		&& !g_ctx->m_local_pawn->m_scoped());
+		&& g_ctx->m_local_pawn->m_scoped());
 
-	bool is_ducking = ((g_ctx->m_local_pawn->m_flags() & FL_DUCKING) || (g_ctx->m_user_cmd->m_button_state.m_button_state & IN_DUCK));
+	bool is_ducking = ((g_ctx->m_local_pawn->m_flags() & FL_DUCKING) || 
+	                   (g_ctx->m_user_cmd->m_button_state.m_button_state & IN_DUCK));
+
+	// В воздухе никогда не максимальная точность
+	if (is_in_air)
+		return false;
 
 	float rounded_accuracy = round_accuracy(inaccuracy);
 	float rounded_duck_accuracy = round_duck_accuracy(inaccuracy);
 
-	if (is_ducking && is_scoped && (g_ctx->m_local_pawn->m_flags() & FL_ONGROUND) && (rounded_duck_accuracy < local_data->m_inaccuracy))
+	// Присев, стоя, заскоуплено
+	if (is_ducking && is_scoped && is_on_ground && (rounded_duck_accuracy < local_data->m_inaccuracy))
 		return true;
 
-	if (speed <= 0 && is_scoped && (g_ctx->m_local_pawn->m_flags() & FL_ONGROUND) && (rounded_accuracy < local_data->m_inaccuracy))
+	// Стоя, не движемся, заскоуплено
+	if (speed <= 0.1f && is_scoped && is_on_ground && (rounded_accuracy < local_data->m_inaccuracy))
 		return true;
 
 	return false;
@@ -1049,6 +1080,25 @@ void c_rage_bot::on_create_move()
 	if (!local_data)
 		return;
 
+	// ИСПРАВЛЕНИЕ #9: Проверяем landing state - не стреляем если только что приземлились
+	auto landing = g_prediction->landing(local_player, user_cmd);
+	const bool just_landed = landing.valid && landing.grounded && landing.will_land && landing.fraction < 0.1f;
+	
+	// Если только что приземлились - ждем 1-2 тика для стабилизации inaccuracy
+	static int ticks_since_land = 10;
+	if (just_landed) {
+		ticks_since_land = 0;
+	} else if ((local_player->m_flags() & FL_ONGROUND) != 0) {
+		ticks_since_land++;
+	} else {
+		ticks_since_land = 0; // В воздухе
+	}
+	
+	// Не стреляем если недавно приземлились (inaccuracy еще высокая)
+	if (ticks_since_land < 2 && weapon_data->m_weapon_type() != WEAPONTYPE_TASER) {
+		return;
+	}
+
 	const auto no_spread_var = g_interfaces->m_var->get_by_name(xorstr_("weapon_accuracy_nospread"));
 	bool no_spread = no_spread_var && no_spread_var->get_bool();
 
@@ -1064,41 +1114,67 @@ void c_rage_bot::on_create_move()
 		user_cmd->m_button_state.m_button_state |= IN_ATTACK2;
 	}
 
-	// Автостоп
+	// ИСПРАВЛЕНИЕ #1: Проверяем can_shoot ДО автостопа
+	// Если не можем стрелять (перезарядка и т.д.) - не стопаем
+	const bool can_fire = can_shoot(local_player, active_weapon);
+	
+	const bool is_taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
+	
+	// Вычисляем угол заранее для хитшанса
+	m_active_record.apply(m_active_record.m_pawn);
+	vec3_t angle = g_math->aim_direction(local_data->m_eye_pos, m_best_target->m_best_point->m_point);
+	vec3_t punch = get_removed_aim_punch_angle(local_player);
+	vec3_t best_angle = angle - punch;
+
+	// ИСПРАВЛЕНИЕ #2: Автостоп с правильной логикой
 	{
 		const int weapon_type = weapon_data->m_weapon_type();
 		const bool is_automatic = weapon_type == WEAPONTYPE_SUBMACHINEGUN
 			|| weapon_type == WEAPONTYPE_RIFLE
 			|| weapon_type == WEAPONTYPE_MACHINEGUN;
 
+		const int tick_base = g_ctx->m_local_controller->m_tick_base();
+		const int next_attack = active_weapon->m_next_primary_attack();
+		
+		// Between работает только если:
+		// 1. Автоматическое оружие
+		// 2. Есть цель
+		// 3. Мы не можем стрелять прямо сейчас (кулдаун)
+		// 4. Но скоро сможем (в течение 3 тиков)
 		const bool between_window = is_automatic
 			&& weapon_cfg.m_auto_stop_between
-			&& active_weapon->m_next_primary_attack() > g_ctx->m_local_controller->m_tick_base();
+			&& !can_fire
+			&& (next_attack - tick_base) <= 3
+			&& (next_attack - tick_base) > 0;
+
+		// Early работает когда мы можем стрелять И хотим заранее остановиться
+		const bool should_early_stop = can_fire && weapon_cfg.m_auto_stop_early;
+		
+		// Full работает когда мы можем стрелять И нужен полный стоп
+		const bool should_full_stop = can_fire && weapon_cfg.m_auto_stop_full;
 
 		auto_stop_options_t stop_options{};
 		stop_options.m_enabled = weapon_cfg.m_auto_stop;
-		stop_options.m_early = weapon_cfg.m_auto_stop_early;
-		stop_options.m_full = weapon_cfg.m_auto_stop_full;
+		stop_options.m_early = should_early_stop && !should_full_stop; // Early только если не full
+		stop_options.m_full = should_full_stop;
 		stop_options.m_between = between_window;
 		stop_options.m_air = weapon_cfg.m_auto_stop_air;
-		stop_options.m_duck = weapon_cfg.m_auto_stop_duck;
+		stop_options.m_duck = false; // Duck будет управляться хитшансом ниже
 		stop_options.m_no_spread = no_spread;
 
 		g_movement->auto_stop(user_cmd, local_player, active_weapon, stop_options);
 	}
 
-	if (!can_shoot(local_player, active_weapon))
+	// Если не можем стрелять - выходим
+	if (!can_fire) {
+		m_active_record.reset(m_active_record.m_pawn);
 		return;
+	}
 
-	const bool is_taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
-
-	m_active_record.apply(m_active_record.m_pawn);
-
-	vec3_t angle = g_math->aim_direction(local_data->m_eye_pos, m_best_target->m_best_point->m_point);
-
-	vec3_t punch = get_removed_aim_punch_angle(local_player);
-	vec3_t best_angle = angle - punch;
-
+	// ИСПРАВЛЕНИЕ #3: Хитшанс проверяется ПОСЛЕ автостопа
+	// Обновляем weapon accuracy после автостопа
+	active_weapon->update_accuracy_penality();
+	
 	const int hit_chance = calculate_hit_chance(m_best_target->m_pawn, best_angle, active_weapon, weapon_data, no_spread);
 
 	m_active_record.reset(m_active_record.m_pawn);
@@ -1111,6 +1187,31 @@ void c_rage_bot::on_create_move()
 		&& m_best_target->m_best_point->m_damage < static_cast<float>(m_best_target->m_pawn->m_health())) {
 		required_hc = (std::min)(required_hc + 25.f, 100.f);
 	}
+	
+	// ИСПРАВЛЕНИЕ #4: Duck на основе хитшанса
+	// Если хитшанс низкий - приседаем для улучшения точности
+	if (weapon_cfg.m_auto_stop_duck && hit_chance < required_hc && hit_chance < 95) {
+		user_cmd->m_button_state.m_button_state |= IN_DUCK;
+		user_cmd->m_button_state.m_button_state2 |= IN_DUCK;
+		user_cmd->m_button_state.m_button_state3 |= IN_DUCK;
+		
+		// Пересчитываем хитшанс после duck
+		active_weapon->update_accuracy_penality();
+		const int new_hit_chance = calculate_hit_chance(m_best_target->m_pawn, best_angle, active_weapon, weapon_data, no_spread);
+		
+		// Если duck улучшил - используем новое значение
+		const int final_hit_chance = (std::max)(hit_chance, new_hit_chance);
+		
+		// Проверяем финальный хитшанс
+		if (static_cast<float>(final_hit_chance) < required_hc) {
+			// Хитшанс всё ещё низкий - не стреляем
+			return;
+		}
+	}
+	else if (static_cast<float>(hit_chance) < required_hc) {
+		// Хитшанс низкий и duck не помог/не включен - не стреляем
+		return;
+	}
 
 	// DT / HS: тумблер + кейбинд
 	const bool dt_active = g_cfg->rage_bot.m_double_tap
@@ -1118,7 +1219,12 @@ void c_rage_bot::on_create_move()
 	const bool hs_active = g_cfg->rage_bot.m_hide_shots
 		&& g_key_handler->is_pressed(g_cfg->rage_bot.m_hide_shots_key, g_cfg->rage_bot.m_hide_shots_key_style);
 
-	const bool want_shoot = static_cast<float>(hit_chance) >= required_hc;
+	// ИСПРАВЛЕНИЕ #5: Сбрасываем DT флаг если не активен
+	if (!dt_active && !hs_active) {
+		m_dt_fired = false;
+	}
+
+	const bool want_shoot = true; // Если дошли сюда - уже проверили хитшанс выше
 
 	if (dt_active || hs_active) {
 		if (want_shoot) {
@@ -1139,9 +1245,7 @@ void c_rage_bot::on_create_move()
 		return;
 	}
 
-	if (!want_shoot)
-		return;
-
+	// Обычная атака без эксплойтов
 	for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
 		auto tick = user_cmd->pb.mutable_input_history(i);
 		if (tick) {
