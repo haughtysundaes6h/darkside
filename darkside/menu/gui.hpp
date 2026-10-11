@@ -59,11 +59,18 @@ public:
     float m_scale = 1.0f;
 
     // How many widgets already own the slot just left of the row's control (the colour swatch,
-    // the "..." options button). row_begin() clears it and each claimant bumps it *before* the
-    // row's Checkbox/Slider runs, so the bind gear drawn from inside that widget can step one
-    // slot further left instead of landing on top of them.
+    // the options gear). row_begin() clears it and each claimant bumps it *before* the row's
+    // Checkbox/Combo/Slider runs; that widget then calls take_row_slot_reserve(), which returns
+    // the room its label has to give up and clears the count again for the next row.
     int m_row_slot_claims = 0;
     float row_slot_step( ) const { return 22.f * m_scale; }
+    float take_row_slot_reserve( );
+
+    // Which control a row is about to draw. The options gear and the colour swatch sit in the gap
+    // just left of that control, so the slot has to know how wide it is: a toggle is 30px on the
+    // row's right edge, a combo/multibox is a 130px box, a slider's track starts where its label
+    // reserve ends. Passing the wrong kind puts the gear on top of the control.
+    enum class row_control { toggle, box, slider };
 
     color_t accent_color = { 0.318f, 0.486f, 0.992f, 1.f }; // old one
     //color_t accent_color = { 0.604f, 0.596f, 0.788f, 1.f }; // neverlose v4
@@ -323,18 +330,21 @@ public:
     bool popup_begin( const char* name, bool clicked, float width = 216.f, bool titled = true, bool beside = true );
     void popup_end();
 
-    // A "..." button in the slot left of the next Checkbox, opening a card beside the row - for
-    // the extra settings of a toggle. Fill it with popup rows / sections, exactly like row_popup:
+    // A gear button in the slot left of the row's control, opening a card beside the row - for the
+    // extra settings of that row. `control` says what the row is about to draw, which is what puts
+    // the gear next to the control instead of next to the label. Fill the card with popup rows /
+    // sections, exactly like row_popup:
     //
     //   gui.row_begin( );
-    //   if ( gui.row_options_begin( "##traj" ) ) { ...rows... gui.row_options_end( ); }
-    //   ImGui::Checkbox( "Grenade Trajectory", &traj );
-    bool row_options_begin( const char* id, float width = 216.f );
+    //   if ( gui.row_options_begin( "##traj", 216.f, c_gui::row_control::toggle ) ) { ...rows... gui.row_options_end( ); }
+    //   gui.row_checkbox( "Grenade Trajectory", &traj );
+    bool row_options_begin( const char* id, float width = 216.f, row_control control = row_control::toggle );
     void row_options_end( );
 
     // --- Multibox (multi-select dropdown) ---
-    // A dropdown that shows multiple checkboxes for selecting several items at once.
-    // Shows "None", "item1, item2, ..." or "All" based on selection.
+    // The menu's Combo, only the list stays open and every entry is a checkbox: same row geometry,
+    // same field, same popup surface and layering as ImGui::Combo (it is ImGui::MultiCombo under
+    // the hood). The preview reads "Select", then the chosen items joined with ", ".
     // labels: array of item names, values: array of bools, count: number of items
     bool row_multibox( const char* label, const char* const* items, bool* values, int count, const char* description = "Click to select multiple options." );
 
@@ -428,6 +438,7 @@ private:
     bool    m_cur_box_auto = false;
     bool    m_force_measure = false; // grid_box(): re-measure content even though a concrete (clamped) height was passed
     bool    m_row_started = false;   // row_checkbox()/row_sub_menu(): false until the first row in this box is drawn
+    std::vector<bool> m_row_started_stack; // saved across begin/end_popup_card(): a card's rows are their own run
 
     // popup_section_begin()/end() state for the currently open section
     ImVec2 m_popup_section_pos{};
@@ -481,6 +492,9 @@ private:
     bool   color_begin_at( const char* id, color_slot* slots, int count, const ImRect& swatch, bool allow_gradient );
     bool   color_card_begin( color_slot* slots, int count, bool clicked, const ImRect& swatch, bool allow_gradient );
     void   color_card_body( ImGuiID state_id, ImGuiID mode_id, ImGuiID view_id, color_value* col, bool allow_gradient );
+    // The gap just left of the control a row is about to draw - where its swatch / options gear
+    // sit. Each claimant of the row steps one slot further left (see m_row_slot_claims).
+    ImRect row_slot_rect( row_control control ) const;
     ImRect next_checkbox_swatch_rect( ) const;
     ImRect next_combo_swatch_rect( ) const;
     void   color_card_end( );

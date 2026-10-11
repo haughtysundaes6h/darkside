@@ -139,7 +139,7 @@ void draw_animated_row(const char* id, bool visible, const std::function<void()>
     ImGui::SetCursorScreenPos(start + ImVec2(0.f, animated_height));
 }
 
-void draw_top_bar(ImGuiWindow* window, int current_tab) {
+void draw_top_bar(ImGuiWindow* window) {
     ImDrawList* draw = window->DrawList;
     const ImVec2 pos = window->Pos;
     const ImVec2 size = window->Size;
@@ -217,150 +217,6 @@ void draw_top_bar(ImGuiWindow* window, int current_tab) {
         gui.end_popup_card();
     }
 
-    // Weapon groups selector (only for Rage/Legit tabs)
-    if (current_tab == 0 || current_tab == 1) {
-        const float groups_x = button_pos.x + total_w + 15.f;
-        const float groups_w = 160.f;
-        ImVec2 groups_pos(groups_x, button_pos.y);
-        
-        ImGui::SetCursorScreenPos(groups_pos);
-        const bool groups_clicked = ImGui::InvisibleButton("##weapon_groups", ImVec2(groups_w, 30.f));
-        const bool groups_hovered = ImGui::IsItemHovered();
-        
-        static float groups_hover = 0.f;
-        groups_hover = ImLerp(groups_hover, groups_hovered ? 1.f : 0.f, ImGui::GetIO().DeltaTime * 15.f);
-        
-        draw->AddRectFilled(groups_pos, groups_pos + ImVec2(groups_w, 30.f),
-                            gui.frame_inactive.to_im_color(0.5f + groups_hover * 0.3f), 6.f);
-        
-        // Count enabled groups
-        int enabled_count = 0;
-        if (current_tab == 0) {
-            for (int i = 1; i < WEAPON_GROUP_MAX; ++i)
-                if (g_cfg->rage_bot.m_weapon_config[i].m_override_general)
-                    enabled_count++;
-        }
-        
-        const char* groups_label = enabled_count > 0 ? 
-            (std::to_string(enabled_count) + " weapons").c_str() : "Weapons";
-        static char groups_buf[32];
-        snprintf(groups_buf, sizeof(groups_buf), "%d weapons", enabled_count);
-        const char* display_label = enabled_count > 0 ? groups_buf : "Weapons";
-        
-        const ImVec2 groups_icon_size = ImGui::CalcTextSize(ICON_FA_CROSSHAIRS);
-        draw->AddText(groups_pos + ImVec2(10.f, (30.f - groups_icon_size.y) * 0.5f),
-                      enabled_count > 0 ? gui.accent_color.to_im_color() : gui.text.to_im_color(), 
-                      ICON_FA_CROSSHAIRS);
-        
-        const ImVec2 label_size = ImGui::CalcTextSize(display_label);
-        draw->AddText(groups_pos + ImVec2(30.f, (30.f - label_size.y) * 0.5f),
-                      gui.text.to_im_color(), display_label);
-        
-        const ImVec2 arrow2_size = ImGui::CalcTextSize(ICON_FA_CHEVRON_DOWN);
-        draw->AddText(groups_pos + ImVec2(groups_w - arrow2_size.x - 10.f, (30.f - arrow2_size.y) * 0.5f),
-                      gui.text_disabled.to_im_color(), ICON_FA_CHEVRON_DOWN);
-        
-        // Weapon groups popup - use higher z-order
-        bool groups_open = false;
-        const float groups_anim = gui.popup_animation("##weapon_groups_dropdown", groups_clicked, groups_open);
-        const ImVec2 groups_anchor(groups_pos.x, groups_pos.y + 36.f * s);
-        
-        if (gui.begin_popup_card_at("##weapon_groups_dropdown", groups_open, groups_anim,
-                                    groups_anchor, ImVec2(0.f, 0.f), 220.f)) {
-            // Bring popup to front
-            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-            
-            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts.Size > 4 ? ImGui::GetIO().Fonts->Fonts[4] : ImGui::GetFont());
-            ImGui::TextUnformatted(gui.tr("Weapon Groups"));
-            ImGui::PopFont();
-            ImGui::Separator();
-            
-            static const char* group_icons[] = {
-                ICON_FA_GLOBE, ICON_FA_HAND_PAPER, ICON_FA_HAND_ROCK, ICON_FA_RUNNING,
-                ICON_FA_CROSSHAIRS, ICON_FA_ROBOT, ICON_FA_BINOCULARS, ICON_FA_BULLSEYE,
-                ICON_FA_BOMB, ICON_FA_BOXES
-            };
-            
-            for (int i = 1; i < WEAPON_GROUP_MAX; ++i) {
-                auto& weapon_cfg = g_cfg->rage_bot.m_weapon_config[i];
-                bool is_enabled = weapon_cfg.m_override_general;
-                
-                ImGui::PushID(i);
-                ImVec2 item_pos = ImGui::GetCursorScreenPos();
-                float item_w = ImGui::GetContentRegionAvail().x;
-                float item_h = 32.f * s;
-                ImRect item_bb(item_pos, item_pos + ImVec2(item_w, item_h));
-                
-                // Main button area (click to select/enable)
-                ImRect main_bb(item_pos, item_pos + ImVec2(item_w - 28.f * s, item_h));
-                bool main_hovered = ImGui::IsMouseHoveringRect(main_bb.Min, main_bb.Max, true);
-                bool main_clicked = main_hovered && ImGui::IsMouseClicked(0);
-                
-                // X button area (click to disable)
-                ImRect x_bb(item_pos + ImVec2(item_w - 26.f * s, 0), item_pos + ImVec2(item_w, item_h));
-                bool x_hovered = is_enabled && ImGui::IsMouseHoveringRect(x_bb.Min, x_bb.Max, true);
-                bool x_clicked = x_hovered && ImGui::IsMouseClicked(0);
-                
-                // Animation
-                static std::unordered_map<int, float> item_anims;
-                float& anim = item_anims[i];
-                anim = ImLerp(anim, (main_hovered || x_hovered) ? 1.f : 0.f, ImGui::GetIO().DeltaTime * 15.f);
-                
-                // Background
-                if (anim > 0.01f || is_enabled)
-                    draw->AddRectFilled(item_bb.Min, item_bb.Max, 
-                        is_enabled ? gui.accent_color.to_im_color(0.15f + anim * 0.1f) : gui.frame_inactive.to_im_color(0.5f * anim), 
-                        6.f * s);
-                
-                // Left accent bar if enabled
-                if (is_enabled)
-                    draw->AddRectFilled(item_bb.Min, item_bb.Min + ImVec2(3.f * s, item_h), 
-                        gui.accent_color.to_im_color(), 2.f * s);
-                
-                // Icon
-                const char* icon = group_icons[i];
-                ImVec2 icon_size = ImGui::CalcTextSize(icon);
-                draw->AddText(item_pos + ImVec2(10.f * s, (item_h - icon_size.y) * 0.5f),
-                    is_enabled ? gui.accent_color.to_im_color() : gui.text_disabled.to_im_color(), icon);
-                
-                // Label
-                draw->AddText(item_pos + ImVec2(32.f * s, (item_h - ImGui::GetFontSize()) * 0.5f),
-                    is_enabled ? gui.text.to_im_color() : gui.text_disabled.to_im_color(), 
-                    weapon_group_names[i]);
-                
-                // X button if enabled
-                if (is_enabled) {
-                    static std::unordered_map<int, float> x_anims;
-                    float& x_anim = x_anims[i];
-                    x_anim = ImLerp(x_anim, x_hovered ? 1.f : 0.f, ImGui::GetIO().DeltaTime * 15.f);
-                    
-                    ImVec2 x_center = x_bb.GetCenter();
-                    ImU32 x_col = ImGui::GetColorU32(ImLerp(
-                        gui.text_disabled.to_vec4(1.f, false),
-                        ImVec4(0.93f, 0.33f, 0.36f, 1.f), x_anim));
-                    draw->AddText(x_center - ImGui::CalcTextSize(ICON_FA_TIMES) * 0.5f, x_col, ICON_FA_TIMES);
-                }
-                
-                // Handle clicks
-                if (main_clicked) {
-                    weapon_cfg.m_override_general = true;
-                    g_cfg->rage_bot.m_selected_group = i;
-                    ImGui::CloseCurrentPopup();
-                }
-                if (x_clicked) {
-                    weapon_cfg.m_override_general = false;
-                    if (g_cfg->rage_bot.m_selected_group == i)
-                        g_cfg->rage_bot.m_selected_group = 0;
-                }
-                
-                ImGui::Dummy(ImVec2(item_w, item_h));
-                ImGui::PopID();
-            }
-            
-            gui.end_popup_card();
-        }
-    }
-
     const int search_tab = gui.search_bar(pos + ImVec2(size.x - 15.f * gui.m_scale, 15.f));
     if (search_tab >= 0)
         switch_tab(search_tab);
@@ -385,48 +241,48 @@ void c_menu::draw() {
 }
 
 void c_menu::draw_rage() {
-    // Names for multiboxes
     static const char* hitbox_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
-    static const char* multipoint_names[] = { "Head", "Chest", "Stomach", "Arms", "Legs", "Feet" };
     static const char* auto_stop_names[] = { "Early", "Full Stop", "Between Shots", "Air", "Duck" };
-    
-    // Get current weapon config
-    auto& cfg = g_cfg->rage_bot.m_weapon_config[g_cfg->rage_bot.m_selected_group];
-    
+
+    auto& rage = g_cfg->rage_bot;
+    rage.m_selected_group = ImClamp(rage.m_selected_group, 0, WEAPON_GROUP_MAX - 1);
+    auto& cfg = rage.m_weapon_config[rage.m_selected_group];
+
+    // Standard rows only - Checkbox / Combo / MultiCombo / Slider, the same widgets the Anti-Aim
+    // tab uses. The options gear goes in the slot left of the control it belongs to, and its card
+    // holds the settings that have no row of their own.
     gui.begin_grid(2);
 
     // ========== LEFT COLUMN ==========
     gui.grid_col(0);
-    
-    // MAIN settings
+
     gui.grid_box("MAIN", k_auto_height);
-    
-    // Enable with gear (Hit Chance Seed, Extrapolate, Backtrack)
+
+    // Every row below edits the selected group; General is the fallback the others override.
+    gui.row_begin(); ImGui::Combo("Weapon Group", &rage.m_selected_group, weapon_group_names, WEAPON_GROUP_MAX);
+
     gui.row_begin();
-    if (gui.row_options_begin("##enable_opts")) {
+    if (gui.row_options_begin("##enable_opts", 216.f, c_gui::row_control::toggle)) {
         gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
         gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
         gui.row_checkbox("Backtrack", &cfg.m_backtrack);
         gui.row_options_end();
     }
-    gui.row_checkbox("Enable", &g_cfg->rage_bot.m_enabled);
-    
+    gui.row_checkbox("Enable", &rage.m_enabled);
+
+    gui.row_checkbox("Silent", &rage.m_silent);
+    gui.row_checkbox("Override General", &cfg.m_override_general,
+                     "Use this group's settings instead of the General ones.");
     gui.row_checkbox("Penetration", &cfg.m_penetration);
-    gui.row_checkbox("Silent", &g_cfg->rage_bot.m_silent);
     gui.row_checkbox("Auto Scope", &cfg.m_auto_scope);
     gui.end_group_box();
-    
-    // AUTO-STOP settings
-    gui.grid_box("AUTO-STOP", k_auto_height);
-    
-    // Auto Stop with gear for modes
-    bool auto_stop_modes[5] = { cfg.m_auto_stop_early, cfg.m_auto_stop_full, cfg.m_auto_stop_between, cfg.m_auto_stop_air, cfg.m_auto_stop_duck };
-    gui.row_begin();
-    if (gui.row_options_begin("##autostop_opts")) {
-        gui.row_multibox("Modes", auto_stop_names, auto_stop_modes, 5, "Select auto stop modes.");
-        gui.row_options_end();
-    }
+
+    gui.grid_box("AUTO STOP", k_auto_height);
     gui.row_checkbox("Auto Stop", &cfg.m_auto_stop);
+
+    bool auto_stop_modes[5] = { cfg.m_auto_stop_early, cfg.m_auto_stop_full, cfg.m_auto_stop_between,
+                                cfg.m_auto_stop_air, cfg.m_auto_stop_duck };
+    gui.row_multibox("Modes", auto_stop_names, auto_stop_modes, 5, "Select auto stop modes.");
     cfg.m_auto_stop_early = auto_stop_modes[0];
     cfg.m_auto_stop_full = auto_stop_modes[1];
     cfg.m_auto_stop_between = auto_stop_modes[2];
@@ -436,28 +292,23 @@ void c_menu::draw_rage() {
 
     // ========== RIGHT COLUMN ==========
     gui.grid_col(1);
-    
-    // SETTINGS
+
     gui.grid_box("SETTINGS", k_auto_height);
-    
-    // Hitbox multibox (no gear)
+
     gui.row_multibox("Hitbox", hitbox_names, cfg.m_hitboxes, 6, "Select target hitboxes.");
-    
-    // Multipoint with gear (Head Scale, Body Scale)
+
     gui.row_begin();
-    if (gui.row_options_begin("##multipoint_opts")) {
+    if (gui.row_options_begin("##multipoint_opts", 216.f, c_gui::row_control::box)) {
         gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
         gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%");
         gui.row_options_end();
     }
-    gui.row_multibox("Multipoint", multipoint_names, cfg.m_multi_points, 6, "Select multipoint locations.");
-    
-    // Hit Chance slider
+    gui.row_multibox("Multipoint", hitbox_names, cfg.m_multi_points, 6, "Select multipoint locations.");
+
     gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
-    
-    // Min Damage with gear (Delay Shot)
+
     gui.row_begin();
-    if (gui.row_options_begin("##mindmg_opts")) {
+    if (gui.row_options_begin("##mindmg_opts", 216.f, c_gui::row_control::slider)) {
         gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
         gui.row_options_end();
     }
@@ -697,7 +548,7 @@ void c_menu::render() {
         if (gui.tab(ICON_FA_COG, "Config", gui.m_tab == 6)) switch_tab(6);
         ImGui::EndChild();
 
-        draw_top_bar(window, gui.m_tab);
+        draw_top_bar(window);
 
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, gui.m_anim);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.f, 8.f));
