@@ -323,6 +323,7 @@ public:
 
 	SCHEMA( m_burst_mode, bool, "C_CSWeaponBase", "m_bBurstMode" );
 	SCHEMA( m_burst_shots_remaining, int, "C_CSWeaponBaseGun", "m_iBurstShotsRemaining" );
+	SCHEMA( m_zoom_level, int, "C_CSWeaponBaseGun", "m_zoomLevel" );
 
 	schema_add_with_offset(m_get_sub_class_id, void*, "C_BaseEntity", "m_nSubclassID", 0x8);
 
@@ -369,7 +370,6 @@ public:
 
 class c_cs_weapon_base : public c_base_player_weapon {
 public:
-	SCHEMA( m_zoom_level, int, "C_CSWeaponBaseGun", "m_zoomLevel" );
 	SCHEMA( m_burst_mode, bool, "C_CSWeaponBase", "m_bBurstMode" );
 };
 
