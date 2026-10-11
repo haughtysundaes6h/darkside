@@ -214,6 +214,7 @@ public:
 
         // ====== MISC (rage anti-aim box) ======
         bool m_aa_slow_walk = false;
+        int m_aa_slow_walk_speed = 34;  // 1-100%
         bool m_freestanding = false;
         int m_freestanding_mode = 0;  // 0=Auto, 1=Left, 2=Right
         bool m_leg_jitter = false;  // дёрганье анимаций ножек

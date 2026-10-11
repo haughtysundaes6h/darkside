@@ -71,8 +71,20 @@ void c_anti_hit::on_create_move(c_user_cmd* user_cmd) {
 
     // Slow Walk из AA-меню: честный IN_WALK (движковый walk-режим).
     // Не режется квантайзом — это кнопка, а не дробные мувы.
-    if (g_cfg->anti_hit.m_aa_slow_walk && (pawn->m_flags() & FL_ONGROUND))
+    // + ограничение скорости по слайдеру
+    if (g_cfg->anti_hit.m_aa_slow_walk && (pawn->m_flags() & FL_ONGROUND)) {
         set_button(user_cmd, IN_WALK, true);
+        
+        // Дополнительное ограничение скорости если слайдер < 100%
+        const int speed_percent = std::clamp(g_cfg->anti_hit.m_aa_slow_walk_speed, 1, 100);
+        if (speed_percent < 100) {
+            auto* weapon = pawn->get_active_weapon();
+            if (weapon) {
+                float max_speed = weapon->get_max_speed() * (speed_percent / 100.0f);
+                g_movement->slow_walk(user_cmd, speed_percent / 100.0f);
+            }
+        }
+    }
 
     // Pitch
     handle_pitch(user_cmd);
@@ -261,28 +273,51 @@ float c_anti_hit::apply_yaw_modifier(float yaw) {
     return yaw;
 }
 
-// Джиттер из меню: Disabled / Low / Medium / High.
-// Детерминированный по чётности команды: стабилен, дружелюбен к мув-фиксу.
+// Джиттер из меню: Disabled / Offset / Center / 3-Way / 5-Way
+// Детерминированный по command_number для стабильности и совместимости с мув-фиксом
 float c_anti_hit::apply_yaw_jitter(float yaw, int command_number) {
     const int mode = g_cfg->anti_hit.m_yaw_jitter;
     if (mode <= 0)
         return yaw;
 
-    const bool flip = (command_number % 2) != 0;
+    // Используем jitter_amount из конфига, если есть, иначе дефолтный
+    const float amount = (g_cfg->anti_hit.m_jitter_amount > 0) 
+        ? static_cast<float>(g_cfg->anti_hit.m_jitter_amount) 
+        : 45.0f;
 
     switch (mode) {
-        case 1: // Low — ±22.5°
-            yaw += flip ? 22.5f : -22.5f;
-            break;
-
-        case 2: // Medium — ±45°
-            yaw += flip ? 45.0f : -45.0f;
-            break;
-
-        case 3: // High — 30..90° рандомная амплитуда с чередованием стороны
+        case 1: // Offset — чередование влево/вправо
         {
-            const float amount = 30.0f + tick_rand(command_number, 3) * 60.0f;
+            const bool flip = (command_number % 2) != 0;
             yaw += flip ? amount : -amount;
+            break;
+        }
+
+        case 2: // Center — лево / центр / право
+        {
+            const int phase = command_number % 3;
+            if (phase == 0)
+                yaw -= amount;
+            else if (phase == 1)
+                yaw += 0.0f; // центр
+            else
+                yaw += amount;
+            break;
+        }
+
+        case 3: // 3-Way — три фиксированные позиции (-60°, 0°, +60°)
+        {
+            const int phase = command_number % 3;
+            constexpr float offsets[3] = { -60.0f, 0.0f, 60.0f };
+            yaw += offsets[phase];
+            break;
+        }
+
+        case 4: // 5-Way — пять фиксированных позиций (-90°, -45°, 0°, +45°, +90°)
+        {
+            const int phase = command_number % 5;
+            constexpr float offsets[5] = { -90.0f, -45.0f, 0.0f, 45.0f, 90.0f };
+            yaw += offsets[phase];
             break;
         }
     }

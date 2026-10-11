@@ -475,8 +475,7 @@ void c_menu::draw_rage() {
 
     static const char* pitch_modes[]  = { "Off", "Down", "Up", "Zero", "Custom" };
     static const char* yaw_modes[]    = { "Off", "Backward", "Sideways", "Spin", "At Target" };
-    static const char* jitter_modes[] = { "Disabled", "Low", "Medium", "High" };
-    static const char* free_modes[]   = { "Auto", "Left", "Right" };
+    static const char* jitter_modes[] = { "Disabled", "Offset", "Center", "3-Way", "5-Way" };
 
     gui.row_checkbox("Enabled", &anti.m_enabled);
 
@@ -493,15 +492,15 @@ void c_menu::draw_rage() {
 
     gui.row_begin(); ImGui::Combo("Yaw Jitter", &anti.m_yaw_jitter, jitter_modes, IM_ARRAYSIZE(jitter_modes));
 
-    gui.row_checkbox("Slow Walk", &anti.m_aa_slow_walk);
-    gui.row_checkbox("Leg Jitter", &anti.m_leg_jitter);
-
-    // Freestanding (gear: Mode)
+    // Slow Walk с слайдером скорости
     gui.row_begin();
-    if (gui.row_options_begin("##freestanding_opts", 216.f, c_gui::row_control::toggle)) {
-        gui.row_begin(); ImGui::Combo("Mode", &anti.m_freestanding_mode, free_modes, IM_ARRAYSIZE(free_modes));
+    if (gui.row_options_begin("##slowwalk_opts", 250.f, c_gui::row_control::toggle)) {
+        gui.row_begin(); ImGui::SliderInt("Speed", &anti.m_aa_slow_walk_speed, 1, 100, "%d%%");
         gui.row_options_end();
     }
+    gui.row_checkbox("Slow Walk", &anti.m_aa_slow_walk);
+    
+    gui.row_checkbox("Leg Jitter", &anti.m_leg_jitter);
     gui.row_checkbox("Freestanding", &anti.m_freestanding);
     gui.end_group_box();
 
