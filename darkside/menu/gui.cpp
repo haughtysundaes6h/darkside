@@ -446,9 +446,23 @@ bool c_gui::sub_menu(const char* label) {
 }
 
 void c_gui::row_begin() {
+    // A row whose slot has already been claimed (options gear, colour swatch) has begun: the
+    // widget it belongs to is still to come. Starting a "new" row there would drop a separator
+    // between the gear and its own widget and forget the claim, so the label would run under it.
+    if ( m_row_slot_claims > 0 )
+        return;
     if ( m_row_started ) Separator( );
     m_row_started = true;
     m_row_slot_claims = 0; // a fresh row: nothing owns the slot left of its control yet
+}
+
+float c_gui::take_row_slot_reserve() {
+    // Called by the row widgets (Checkbox / BeginCombo / SliderScalar) when they lay their label
+    // out: the claimed slots left of the control are room the label does not have. Taking it here
+    // also clears the count, so a row that never called row_begin() cannot inherit it.
+    const float reserve = m_row_slot_claims * row_slot_step();
+    m_row_slot_claims = 0;
+    return reserve;
 }
 
 bool c_gui::row_checkbox(const char* label, bool* v, const char* description) {
@@ -880,6 +894,11 @@ bool c_gui::begin_popup_card_body(const char* popup_name, ImGuiID id, float anim
         ImGuiWindow* window = ImGui::GetCurrentWindow();
         popup_surface(window->DrawList, window->Pos, window->Pos + window->Size,
             15.f * m_scale, surface_alpha, std::strcmp(popup_name, "UserPopupAnim") != 0);
+        // A card's rows are their own run: left inheriting the tab's "a row was already drawn"
+        // state, the first row_begin() inside the card drops a separator on the card's title.
+        // Restored in end_popup_card(), so the row the card belongs to keeps its own rhythm.
+        m_row_started_stack.push_back(m_row_started);
+        m_row_started = false;
     }
 
     if (!open) {
@@ -911,6 +930,10 @@ void c_gui::end_popup_card() {
             state.drag = state.drag_target;
     }
     end_animated_popup();
+    if (!m_row_started_stack.empty()) {
+        m_row_started = m_row_started_stack.back();
+        m_row_started_stack.pop_back();
+    }
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(4);
 }
@@ -1110,24 +1133,26 @@ static bool cfg_choice_row(const char* id, const char* label, float w, float h, 
     return clicked;
 }
 
-bool c_gui::row_options_begin( const char* id, float width ) {
+bool c_gui::row_options_begin( const char* id, float width, row_control control ) {
     ImGuiWindow* window = ImGui::GetCurrentWindow( );
     if ( window->SkipItems )
         return false;
 
     const float s = m_scale;
-    // Same slot the colour swatch uses - just left of the toggle the row is about to draw.
-    const ImRect slot = next_checkbox_swatch_rect( );
+    // Same slot the colour swatch uses - the gap just left of the control the row is about to
+    // draw, never left of its label. Measured before the claim so a swatch already in the row
+    // pushes this gear one slot further left instead of under it.
+    const ImRect slot = row_slot_rect( control );
     const ImRect bb( ImVec2( slot.Min.x - 3.f * s, slot.Min.y - 2.f * s ),
                      ImVec2( slot.Max.x + 3.f * s, slot.Max.y + 2.f * s ) );
 
-    ++m_row_slot_claims; // same slot the swatch uses; the bind gear steps left of it
+    ++m_row_slot_claims; // the row's widget clips its label by every slot claimed this way
 
     ImGui::PushID( id );
     const std::string popup_name = std::string( id ) + "Popup";
-    const ImGuiID item_id = ImGui::GetID( "##dots" );
-    // ItemAdd without ItemSize, and before the checkbox: the dots take their own click instead
-    // of toggling the row they sit on.
+    const ImGuiID item_id = ImGui::GetID( "##gear" );
+    // ItemAdd without ItemSize, and before the row's own widget: the gear takes its own click
+    // instead of toggling the row it sits on.
     bool clicked = false, hovered = false, held = false;
     if ( ImGui::ItemAdd( bb, item_id ) )
         clicked = ImGui::ButtonBehavior( bb, item_id, &hovered, &held );
@@ -1137,14 +1162,20 @@ bool c_gui::row_options_begin( const char* id, float width ) {
     ImDrawList* draw = window->DrawList;
     if ( t > 0.01f )
         draw->AddRectFilled( bb.Min, bb.Max, frame_inactive.to_im_color( 0.85f * t ), 6.f * s );
+
+    // The gear: FontAwesome is merged into the menu's body font, so it draws with the current one.
     const ImU32 col = cfg_mix( text_disabled.to_vec4( 1.f, false ), text.to_vec4( 1.f, false ), ImMax( t, up ? 1.f : 0.f ) );
-    const ImVec2 c = bb.GetCenter( );
-    for ( int i = -1; i <= 1; ++i )
-        draw->AddCircleFilled( ImVec2( IM_ROUND( c.x + i * 4.f * s ), IM_ROUND( c.y ) ), 1.4f * s, col, 12 );
+    ImFont* font = ImGui::GetFont( );
+    const float icon_fs = 13.f * s;
+    const ImVec2 icon_size = font->CalcTextSizeA( icon_fs, FLT_MAX, 0.f, ICON_FA_COG );
+    draw->AddText( font, icon_fs,
+                   ImVec2( IM_ROUND( bb.GetCenter( ).x - icon_size.x * 0.5f ),
+                           IM_ROUND( bb.GetCenter( ).y - icon_size.y * 0.5f ) ),
+                   col, ICON_FA_COG );
 
     bool wants_open = false;
     const float anim = popup_animation( popup_name.c_str( ), clicked, wants_open );
-    const ImVec2 click_pos = popup_click_pos( popup_name.c_str( ), clicked, ImVec2( bb.Max.x, c.y ) );
+    const ImVec2 click_pos = popup_click_pos( popup_name.c_str( ), clicked, ImVec2( bb.Max.x, bb.GetCenter( ).y ) );
     if ( begin_popup_card( popup_name.c_str( ), wants_open, anim, click_pos, width, true ) )
         return true; // PopID in row_options_end()
     ImGui::PopID( );
@@ -1157,140 +1188,18 @@ void c_gui::row_options_end( ) {
 }
 
 bool c_gui::row_multibox( const char* label, const char* const* items, bool* values, int count, const char* description ) {
-    row_begin();
-    
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    if (window->SkipItems) { search_note(label); return false; }
+    // The menu's own Combo, multi-select: ImGui::MultiCombo draws the same row (label left, 130px
+    // field right), opens the same popup surface on the same layer, and keeps that popup open while
+    // entries are ticked. Nothing here is hand-drawn, so a multibox can never drift from a combo.
+    row_begin( );
 
-    ImGuiContext& g = *GImGui;
-    const ImGuiStyle& style = g.Style;
-    const ImGuiID id = window->GetID(label);
-    const float s = m_scale;
-    
-    float w = ImGui::GetContentRegionAvail().x;
-    ImVec2 pos = window->DC.CursorPos;
-    float row_h = ImMax(19.f * s, ImGui::GetFontSize()) + style.FramePadding.y * 2.f;
-    ImVec2 size(w, row_h);
-    ImRect total_bb(pos, pos + size);
-    const float flash = search_note(label);
-    
-    ImGui::ItemSize(total_bb, style.FramePadding.y);
-    if (!ImGui::ItemAdd(total_bb, id))
+    if ( ImGui::GetCurrentWindow( )->SkipItems || count <= 0 || !items || !values ) {
+        search_note( label );
         return false;
-    
-    // Build preview string
-    std::string preview;
-    int selected_count = 0;
-    for (int i = 0; i < count; ++i) {
-        if (values[i]) {
-            selected_count++;
-            if (!preview.empty()) preview += ", ";
-            preview += tr(items[i]);
-        }
     }
-    if (selected_count == 0) preview = tr("None");
-    else if (selected_count == count) preview = tr("All");
-    
-    // Draw label on the left
-    ImDrawList* draw = window->DrawList;
-    const char* shown_label = tr(label);
-    ImVec4 label_col = text_disabled.to_vec4(1.f, false);
-    label_col = ImLerp(label_col, accent_color.to_vec4(1.f, false), flash);
-    draw->AddText(ImVec2(total_bb.Min.x, IM_ROUND(total_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
-        ImGui::GetColorU32(label_col), shown_label);
-    
-    // Combo box on the right
-    const float combo_w = 130.f * s;
-    const float combo_h = 22.f * s;
-    ImVec2 combo_pos(total_bb.Max.x - combo_w, total_bb.GetCenter().y - combo_h / 2.f);
-    ImRect combo_bb(combo_pos, combo_pos + ImVec2(combo_w, combo_h));
-    
-    const ImGuiID combo_id = window->GetID("##combo");
-    bool combo_hovered = ImGui::IsMouseHoveringRect(combo_bb.Min, combo_bb.Max);
-    bool combo_clicked = combo_hovered && ImGui::IsMouseClicked(0);
-    
-    // Animation
-    static std::unordered_map<ImGuiID, float> hover_anims;
-    float& hover_anim = hover_anims[combo_id];
-    hover_anim = ImLerp(hover_anim, combo_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
-    
-    // Draw combo box background
-    draw->AddRectFilled(combo_bb.Min, combo_bb.Max, field_bg.to_im_color(0.8f + 0.2f * hover_anim), 6.f * s);
-    draw->AddRect(combo_bb.Min, combo_bb.Max, border.to_im_color(0.5f + 0.3f * hover_anim), 6.f * s, 0, 1.f * s);
-    
-    // Preview text (clipped)
-    ImGui::PushClipRect(combo_bb.Min + ImVec2(8.f * s, 0), combo_bb.Max - ImVec2(20.f * s, 0), true);
-    draw->AddText(ImVec2(combo_bb.Min.x + 8.f * s, IM_ROUND(combo_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
-        text.to_im_color(), preview.c_str());
-    ImGui::PopClipRect();
-    
-    // Arrow icon
-    const char* arrow = ICON_FA_CHEVRON_DOWN;
-    ImVec2 arrow_size = ImGui::CalcTextSize(arrow);
-    draw->AddText(ImVec2(combo_bb.Max.x - arrow_size.x - 8.f * s, IM_ROUND(combo_bb.GetCenter().y - arrow_size.y / 2.f)),
-        text_disabled.to_im_color(), arrow);
-    
-    // Popup handling
-    const std::string popup_name = std::string(label) + "##multibox_popup";
-    bool wants_open = false;
-    const float anim = popup_animation(popup_name.c_str(), combo_clicked, wants_open);
-    const ImVec2 click_pos = popup_click_pos(popup_name.c_str(), combo_clicked, ImVec2(combo_bb.Min.x, combo_bb.Max.y + 4.f * s));
-    
-    bool changed = false;
-    if (begin_popup_card(popup_name.c_str(), wants_open, anim, click_pos, combo_w / s, false, true)) {
-        ImDrawList* popup_draw = ImGui::GetWindowDrawList();
-        for (int i = 0; i < count; ++i) {
-            ImGui::PushID(i);
-            const char* item_label = tr(items[i]);
-            
-            ImVec2 item_pos = ImGui::GetCursorScreenPos();
-            float item_w = ImGui::GetContentRegionAvail().x;
-            float item_h = 26.f * s;
-            ImRect item_bb(item_pos, item_pos + ImVec2(item_w, item_h));
-            
-            const ImGuiID item_id = ImGui::GetID("##item");
-            bool item_hovered = ImGui::IsMouseHoveringRect(item_bb.Min, item_bb.Max);
-            bool item_clicked = item_hovered && ImGui::IsMouseClicked(0);
-            
-            if (item_clicked) {
-                values[i] = !values[i];
-                changed = true;
-            }
-            
-            // Hover highlight
-            static std::unordered_map<ImGuiID, float> item_anims;
-            float& item_anim = item_anims[item_id];
-            item_anim = ImLerp(item_anim, item_hovered ? 1.f : 0.f, g.IO.DeltaTime * 15.f);
-            
-            if (item_anim > 0.01f)
-                popup_draw->AddRectFilled(item_bb.Min, item_bb.Max, frame_inactive.to_im_color(0.6f * item_anim), 4.f * s);
-            
-            // Checkbox
-            float check_size = 14.f * s;
-            ImVec2 check_pos(item_bb.Min.x + 8.f * s, item_bb.GetCenter().y - check_size / 2.f);
-            ImRect check_bb(check_pos, check_pos + ImVec2(check_size, check_size));
-            
-            popup_draw->AddRectFilled(check_bb.Min, check_bb.Max, 
-                values[i] ? accent_color.to_im_color(0.9f) : frame_inactive.to_im_color(0.8f), 3.f * s);
-            
-            if (values[i]) {
-                float pad = 3.f * s;
-                ImGui::RenderCheckMark(popup_draw, check_bb.Min + ImVec2(pad, pad), 
-                    IM_COL32(255, 255, 255, 255), check_size - pad * 2.f);
-            }
-            
-            // Item label
-            popup_draw->AddText(ImVec2(check_bb.Max.x + 8.f * s, IM_ROUND(item_bb.GetCenter().y - ImGui::GetFontSize() / 2.f)),
-                values[i] ? text.to_im_color() : text_disabled.to_im_color(), item_label);
-            
-            // Advance cursor
-            ImGui::Dummy(ImVec2(item_w, item_h));
-            ImGui::PopID();
-        }
-        end_popup_card();
-    }
-    
-    info_tooltip(label, description);
+
+    const bool changed = ImGui::MultiCombo( label, values, items, count );
+    info_tooltip( label, description );
     return changed;
 }
 
@@ -2279,12 +2188,25 @@ void c_gui::apply_theme( int new_theme ) {
 }
 
 void c_gui::apply_style_colors( ) {
-    ImVec4* c = ImGui::GetStyle( ).Colors;
+    ImGuiStyle& style = ImGui::GetStyle( );
+    ImVec4* c = style.Colors;
     c[ ImGuiCol_Text ]           = text.to_vec4( 1.f, false );
     c[ ImGuiCol_TextDisabled ]   = text_disabled.to_vec4( 1.f, false );
     c[ ImGuiCol_Separator ]      = border.to_vec4( 1.f, false );
     c[ ImGuiCol_Border ]         = border.to_vec4( 1.f, false );
     c[ ImGuiCol_TextSelectedBg ] = accent_color.to_vec4( 0.30f, false );
+
+    // Scrollbars - the ones a long Combo / MultiCombo list and the top bar's config list get.
+    // They sit on a card whose surface is blur + tint, and the stock ImGui ones (14px wide, dark
+    // translucent track, flat gray grab) read there as a foreign bar lying over the frost rather
+    // than as part of the list. Thin, trackless, on the palette; the grab goes to the accent while
+    // it is dragged.
+    c[ ImGuiCol_ScrollbarBg ]          = ImVec4( 0.f, 0.f, 0.f, 0.f );
+    c[ ImGuiCol_ScrollbarGrab ]        = text_disabled.to_vec4( 0.45f, false );
+    c[ ImGuiCol_ScrollbarGrabHovered ] = text.to_vec4( 0.70f, false );
+    c[ ImGuiCol_ScrollbarGrabActive ]  = accent_color.to_vec4( 0.90f, false );
+    style.ScrollbarSize     = 6.f * m_scale;
+    style.ScrollbarRounding = 3.f * m_scale;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2843,18 +2765,55 @@ static bool picker_once( color_slot* slots, int count, Begin begin ) {
     return false;
 }
 
-ImRect c_gui::next_checkbox_swatch_rect( ) const {
-    // Mirrors ImGui::Checkbox's row geometry (row width, row height, toggle on the right edge)
-    // so the swatch lands in the gap just left of the toggle about to be drawn.
+ImRect c_gui::row_slot_rect( row_control control ) const {
+    // Mirrors the row geometry of the widget about to be drawn - Checkbox's toggle on the right
+    // edge, BeginCombo's 130px field, SliderScalar's track - so the swatch / gear lands in the gap
+    // just left of that control instead of on top of it or down by the label.
     ImGuiWindow* window = ImGui::GetCurrentWindow( );
+    const ImGuiStyle& style = ImGui::GetStyle( );
     const float avail = ImGui::GetContentRegionAvail( ).x;
     const float w = is_popup_window( window ) ? ImMin( ImGui::CalcItemWidth( ), avail ) : avail;
-    const float row_h = ImMax( switch_h( ), ImGui::GetFontSize( ) ) + ImGui::GetStyle( ).FramePadding.y * 2.f;
+    const float row_h = ImMax( 19.f * m_scale, ImGui::GetFontSize( ) ) + style.FramePadding.y * 2.f;
     const float sz = 16.f * m_scale;
     const ImVec2 pos = window->DC.CursorPos;
-    const float right = pos.x + w - switch_w( ) - 8.f * m_scale;
+
+    float control_left;
+    switch ( control ) {
+    case row_control::box: {
+        // ImGui::BeginCombo: the field is 130px (never below 70, never wider than the row minus
+        // the 72px it leaves the label) and sits flush with the row's right edge.
+        const float combo_w = ImMin( 130.f * m_scale, ImMax( 70.f * m_scale, w - 72.f * m_scale ) );
+        control_left = pos.x + w - combo_w;
+        break;
+    }
+    case row_control::slider: {
+        // ImGui::SliderScalar: value box (38) + gap (12) on the right, then a track of at most
+        // 74px (100px in a card), starting no further left than the 82px label reserve.
+        const float number_w = 38.f * m_scale;
+        const float control_gap = 12.f * m_scale;
+        const float label_reserved = ImMin( 82.f * m_scale, w * 0.45f );
+        const float track_right = is_popup_window( window ) ? ( pos.x + w - 4.f * m_scale ) : ( pos.x + w - number_w - control_gap );
+        const float max_track_w = ( is_popup_window( window ) ? 100.f : 74.f ) * m_scale;
+        float track_left = ImMax( pos.x + label_reserved, track_right - max_track_w );
+        if ( track_right < track_left + 36.f * m_scale )
+            track_left = ImMax( pos.x, track_right - 36.f * m_scale );
+        control_left = track_left;
+        break;
+    }
+    default: // row_control::toggle - ImGui::Checkbox's switch, flush with the row's right edge
+        control_left = pos.x + w - switch_w( );
+        break;
+    }
+
+    // Every claimant of this row steps one slot further left, so a swatch and a gear side by side
+    // do not land on each other.
+    const float right = control_left - 8.f * m_scale - m_row_slot_claims * row_slot_step( );
     const float top = pos.y + IM_ROUND( ( row_h - sz ) * 0.5f );
     return ImRect( ImVec2( right - sz, top ), ImVec2( right, top + sz ) );
+}
+
+ImRect c_gui::next_checkbox_swatch_rect( ) const {
+    return row_slot_rect( row_control::toggle );
 }
 
 bool c_gui::color_swatch_item( const char* id, const color_value& shown, const ImRect& bb ) {
@@ -3322,9 +3281,12 @@ bool c_gui::color_begin_at( const char* id, color_slot* slots, int count, const 
 bool c_gui::color_picker_begin( const char* id, color_slot* slots, int count ) {
     if ( count <= 0 || ImGui::GetCurrentWindow( )->SkipItems )
         return false;
-    // Claimed before the row's Checkbox runs, so the bind gear steps left of the swatch.
+    // Measured before the claim: the count is what pushes the *next* claimant (an options gear,
+    // say) one slot further left. Claimed before the row's widget runs, so its label gives the
+    // swatch the room it sits in.
+    const ImRect swatch = next_checkbox_swatch_rect( );
     ++m_row_slot_claims;
-    return color_begin_at( id, slots, count, next_checkbox_swatch_rect( ), true );
+    return color_begin_at( id, slots, count, swatch, true );
 }
 
 bool c_gui::color_picker_begin( const char* id, color_value* col ) {
@@ -3408,25 +3370,18 @@ bool c_gui::row_checkbox( const char* label, bool* v, color_value* col, const ch
 }
 
 ImRect c_gui::next_combo_swatch_rect( ) const {
-    // Mirrors ImGui::BeginCombo's row geometry, the way next_checkbox_swatch_rect() mirrors
-    // Checkbox's: the swatch lands in the gap just left of the combo box about to be drawn.
-    ImGuiWindow* window = ImGui::GetCurrentWindow( );
-    const float avail = ImGui::GetContentRegionAvail( ).x;
-    const float w = is_popup_window( window ) ? ImMin( ImGui::CalcItemWidth( ), avail ) : avail;
-    const float row_h = ImMax( 19.f * m_scale, ImGui::GetFontSize( ) ) + ImGui::GetStyle( ).FramePadding.y * 2.f;
-    const float combo_w = ImMin( 130.f * m_scale, ImMax( 70.f * m_scale, w - 72.f * m_scale ) );
-    const float sz = 16.f * m_scale;
-    const ImVec2 pos = window->DC.CursorPos;
-    const float right = pos.x + w - combo_w - 8.f * m_scale;
-    const float top = pos.y + IM_ROUND( ( row_h - sz ) * 0.5f );
-    return ImRect( ImVec2( right - sz, top ), ImVec2( right, top + sz ) );
+    return row_slot_rect( row_control::box );
 }
 
 bool c_gui::row_combo( const char* label, color_value* col, int* index, const char* const items[], int count ) {
     row_begin( );
     if ( col ) {
         color_slot one{ label, col };
-        picker_once( &one, 1, [ & ] { return color_begin_at( label, &one, 1, next_combo_swatch_rect( ), true ); } );
+        // Measured first, then claimed: the claim is what makes the Combo's label stop short of the
+        // swatch instead of running under it.
+        const ImRect swatch = next_combo_swatch_rect( );
+        ++m_row_slot_claims;
+        picker_once( &one, 1, [ & ] { return color_begin_at( label, &one, 1, swatch, true ); } );
     }
     return ImGui::Combo( label, index, items, count );
 }

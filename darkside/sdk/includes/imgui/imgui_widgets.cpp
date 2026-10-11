@@ -1360,6 +1360,10 @@ bool ImGui::Checkbox(const char* label, bool* v)
     if (!ItemAdd(total_bb, id))
         return false;
 
+    // Room the row gave to the widgets sitting left of the toggle (colour swatch, options gear) -
+    // the label stops before them instead of running under them.
+    const float slot_reserve = gui.take_row_slot_reserve();
+
     const ImGuiLastItemData bind_item_data = g.LastItemData;
     const menu_binds::target_id bind_target =
         menu_binds::checkbox_item(window, id, label, total_bb, frame_bb, v);
@@ -1484,12 +1488,13 @@ bool ImGui::Checkbox(const char* label, bool* v)
     // Label �iz
     // ---------------------------------------------------------
 
-    // Clipped to the room left of the switch: a label too long for it fades at that edge and
-    // scrolls while the row is hovered, exactly like a combo's preview text.
+    // Clipped to the room left of the switch (minus whatever the row's swatch / options gear took):
+    // a label too long for it fades at that edge and scrolls while the row is hovered, exactly like
+    // a combo's preview text.
     RenderScrollingText(
         draw,
         id,
-        ImRect(text_x, total_bb.Min.y, frame_bb.Min.x - 8.f * gui.m_scale, total_bb.Max.y),
+        ImRect(text_x, total_bb.Min.y, frame_bb.Min.x - 8.f * gui.m_scale - slot_reserve, total_bb.Max.y),
         text_part,
         text_col,
         hovered
@@ -2110,6 +2115,9 @@ bool ImGui::BeginCombo(const char* label, const char* preview_value, ImGuiComboF
     if (!ItemAdd(total_bb, id, &bb))
         return false;
 
+    // Room the row gave to the widgets sitting left of the field (colour swatch, options gear).
+    const float slot_reserve = gui.take_row_slot_reserve();
+
     bool hovered, held;
     const bool pressed = ButtonBehavior(bb, id, &hovered, &held);
     const ImGuiID popup_id = ImHashStr("##ComboPopup", 0, id);
@@ -2163,7 +2171,7 @@ bool ImGui::BeginCombo(const char* label, const char* preview_value, ImGuiComboF
 
     const char* shown = gui.tr(label); // ID stays on the English label
     RenderScrollingText(draw, ImHashStr("##ComboLabel", 0, id),
-                        ImRect(total_bb.Min.x, total_bb.Min.y, bb.Min.x - 8.f * gui.m_scale, total_bb.Max.y),
+                        ImRect(total_bb.Min.x, total_bb.Min.y, bb.Min.x - 8.f * gui.m_scale - slot_reserve, total_bb.Max.y),
                         shown, label_color, row_hovered);
     if (!popup_open && !gui.popup_fade_visible(popup_id))
         return false;
@@ -3660,6 +3668,9 @@ bool ImGui::SliderScalar( const char* label, ImGuiDataType data_type, void* p_da
     if (!ItemAdd(total_bb, id))
         return false;
 
+    // Room the row gave to the widgets sitting left of the track (colour swatch, options gear).
+    const float slot_reserve = gui.take_row_slot_reserve();
+
     const ImGuiLastItemData bind_item_data = g.LastItemData;
     const menu_binds::target_id bind_target =
         menu_binds::slider_item(window, id, label, total_bb, frame_bb, data_type, p_data, p_min, p_max);
@@ -3769,9 +3780,10 @@ bool ImGui::SliderScalar( const char* label, ImGuiDataType data_type, void* p_da
         label_vec = ImLerp(gui.text_disabled.to_vec4(), gui.text.to_vec4(), text_active);
     }
     label_vec = ImLerp(label_vec, gui.accent_color.to_vec4(1.f, false), search_flash); // jumped here from the search
-    // centred on the label's ink (like every other row) and scrolled on hover when it overflows
+    // centred on the label's ink (like every other row) and scrolled on hover when it overflows;
+    // it stops short of whatever the row placed left of the track (swatch, options gear)
     RenderScrollingText(draw, ImHashStr("##SliderLabel", 0, id),
-                        ImRect(total_bb.Min.x, total_bb.Min.y, frame_bb.Min.x - 8.f * gui.m_scale, total_bb.Max.y),
+                        ImRect(total_bb.Min.x, total_bb.Min.y, frame_bb.Min.x - 8.f * gui.m_scale - slot_reserve, total_bb.Max.y),
                         gui.tr(label), ColorConvertFloat4ToU32(label_vec), row_is_hovered); // ID stays on the English label
 
     draw->AddRectFilled( frame_bb.Min, frame_bb.Max, gui.field_bg.to_im_color( ), 5 );
