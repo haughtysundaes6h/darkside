@@ -1317,6 +1317,23 @@ bool c_rage_bot::build_prediction(int handle, lag_record_t& out) const {
 	return found;
 }
 
+
+// Camera angles are where the player looks. Command angles are already the
+// anti-aim yaw by the time rage runs, so an FOV cone on those follows the
+// character model instead of the face.
+vec3_t player_camera_angles() {
+	if (g_interfaces && g_interfaces->m_csgo_input) {
+		vec3_t camera = g_interfaces->m_csgo_input->get_view_angles();
+		if (std::isfinite(camera.x) && std::isfinite(camera.y))
+			return camera;
+	}
+	if (g_ctx->m_user_cmd && g_ctx->m_user_cmd->pb.has_base()) {
+		const auto view = g_ctx->m_user_cmd->pb.base().viewangles();
+		return { view.x(), view.y(), view.z() };
+	}
+	return {};
+}
+
 void c_rage_bot::select_target(float inaccuracy, float spread) {
 	m_best_target = nullptr;
 	if (m_aim_targets.empty() || !g_ctx->m_local_pawn)
@@ -1330,9 +1347,8 @@ void c_rage_bot::select_target(float inaccuracy, float spread) {
 
 	float cos_fov = -2.f;
 	vec3_t view_dir{};
-	if (g_cfg->rage_bot.m_fov > 0 && g_cfg->rage_bot.m_fov < 180 && g_ctx->m_user_cmd) {
-		auto view = g_ctx->m_user_cmd->pb.base().viewangles();
-		vec3_t angles{ view.x(), view.y(), view.z() };
+	if (g_cfg->rage_bot.m_fov > 0 && g_cfg->rage_bot.m_fov < 180) {
+		vec3_t angles = player_camera_angles();
 		g_math->angle_vectors(angles, view_dir);
 		view_dir = view_dir.normalize();
 		cos_fov = std::cos(deg2rad(static_cast<float>(g_cfg->rage_bot.m_fov)));
@@ -1766,8 +1782,7 @@ void c_rage_bot::on_create_move() {
 		if (fov <= 0 || fov >= 180)
 			enemy_for_scope = true;
 		else {
-			auto view = g_ctx->m_user_cmd->pb.base().viewangles();
-			vec3_t view_angles{ view.x(), view.y(), view.z() };
+			vec3_t view_angles = player_camera_angles();
 			vec3_t forward{};
 			g_math->angle_vectors(view_angles, forward);
 			forward = forward.normalize();
