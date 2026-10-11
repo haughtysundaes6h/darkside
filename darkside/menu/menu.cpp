@@ -373,11 +373,12 @@ void c_menu::draw_rage() {
 
     gui.grid_box("MAIN", k_auto_height);
 
-    // Enabled (gear: Silent / Resolver)
+    // Enabled (gear: Silent / Extrapolate / Backtrack)
     gui.row_begin();
-    if (gui.row_options_begin("##enable_opts", 216.f, c_gui::row_control::toggle)) {
+    if (gui.row_options_begin("##enable_opts", 250.f, c_gui::row_control::toggle)) {
         gui.row_checkbox("Silent", &rage.m_silent);
-        gui.row_checkbox("Resolver", &rage.m_resolver_enabled);
+        gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
+        gui.row_checkbox("Backtrack", &cfg.m_backtrack);
         gui.row_options_end();
     }
     gui.row_checkbox("Enabled", &rage.m_enabled);
@@ -387,7 +388,7 @@ void c_menu::draw_rage() {
     static const char* peek_autostop[] = { "Select", "Early", "Full Stop" };
     static const char* peek_retreat[]  = { "Off", "On Shot", "On Hurt" };
     gui.row_begin();
-    if (gui.row_options_begin("##peek_opts", 240.f, c_gui::row_control::toggle)) {
+    if (gui.row_options_begin("##peek_opts", 250.f, c_gui::row_control::toggle)) {
         gui.row_begin(); ImGui::Combo("Style", &rage.m_peek_assist_style, peek_style, IM_ARRAYSIZE(peek_style));
         gui.row_begin(); ImGui::Combo("Auto Stop", &rage.m_peek_assist_auto_stop, peek_autostop, IM_ARRAYSIZE(peek_autostop));
         gui.row_begin(); ImGui::Combo("Retreat Mode", &rage.m_peek_assist_retreat, peek_retreat, IM_ARRAYSIZE(peek_retreat));
@@ -412,7 +413,7 @@ void c_menu::draw_rage() {
     bool auto_stop_modes[5] = { cfg.m_auto_stop_early, cfg.m_auto_stop_full, cfg.m_auto_stop_between,
                                 cfg.m_auto_stop_air, cfg.m_auto_stop_duck };
     gui.row_begin();
-    if (gui.row_options_begin("##autostop_opts", 216.f, c_gui::row_control::toggle)) {
+    if (gui.row_options_begin("##autostop_opts", 250.f, c_gui::row_control::toggle)) {
         gui.row_multibox("Modes", auto_stop_names, auto_stop_modes, 5, "Select auto stop modes.");
         gui.row_options_end();
     }
@@ -439,19 +440,17 @@ void c_menu::draw_rage() {
 
     // Multipoint (gear: Head Scale / Body Scale)
     gui.row_begin();
-    if (gui.row_options_begin("##multipoint_opts", 216.f, c_gui::row_control::box)) {
+    if (gui.row_options_begin("##multipoint_opts", 250.f, c_gui::row_control::box)) {
         gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
         gui.row_begin(); ImGui::SliderInt("Body Scale", &cfg.m_body_scale, 0, 100, "%d%%");
         gui.row_options_end();
     }
     gui.row_multibox("Multipoint", hitbox_names, cfg.m_multi_points, 6, "Select multipoint locations.");
 
-    // Hit Chance (gear: Hit Chance Seed / Extrapolate / Backtrack)
+    // Hit Chance (gear: Hit Chance Seed)
     gui.row_begin();
-    if (gui.row_options_begin("##hitchance_opts", 216.f, c_gui::row_control::slider)) {
+    if (gui.row_options_begin("##hitchance_opts", 250.f, c_gui::row_control::slider)) {
         gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
-        gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
-        gui.row_checkbox("Backtrack", &cfg.m_backtrack);
         gui.row_options_end();
     }
     gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
@@ -481,7 +480,7 @@ void c_menu::draw_rage() {
 
     // Yaw (gear: Yaw Add / At Target)
     gui.row_begin();
-    if (gui.row_options_begin("##yaw_opts", 216.f, c_gui::row_control::box)) {
+    if (gui.row_options_begin("##yaw_opts", 250.f, c_gui::row_control::box)) {
         gui.row_begin(); ImGui::SliderInt("Yaw Add", &anti.m_yaw_amount, -180, 180);
         gui.row_checkbox("At Target", &anti.m_at_target);
         gui.row_options_end();

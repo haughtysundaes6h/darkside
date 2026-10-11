@@ -1170,13 +1170,19 @@ bool c_gui::row_options_begin( const char* id, float width, row_control control 
     bool wants_open = false;
     const float anim = popup_animation( popup_name.c_str( ), clicked, wants_open );
     const ImVec2 click_pos = popup_click_pos( popup_name.c_str( ), clicked, ImVec2( bb.Max.x, bb.GetCenter( ).y ) );
-    if ( begin_popup_card( popup_name.c_str( ), wants_open, anim, click_pos, width, true ) )
-        return true; // PopID in row_options_end()
+    if ( begin_popup_card( popup_name.c_str( ), wants_open, anim, click_pos, width, true ) ) {
+        // The card forces ItemSpacing to 0 (the config list / colour picker lay themselves out).
+        // A gear card is just stacked rows, so give them a vertical gap - otherwise several
+        // controls pile up with no breathing room. Popped in row_options_end().
+        ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 0.f, 7.f * s ) );
+        return true; // PopID + PopStyleVar in row_options_end()
+    }
     ImGui::PopID( );
     return false;
 }
 
 void c_gui::row_options_end( ) {
+    ImGui::PopStyleVar( ); // the ItemSpacing pushed in row_options_begin()
     end_popup_card( );
     ImGui::PopID( );
 }
