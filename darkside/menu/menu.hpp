@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Windows.h>
 #include "gui.hpp"
 #include <memory>
 
