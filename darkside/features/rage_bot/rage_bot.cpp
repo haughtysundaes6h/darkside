@@ -746,7 +746,10 @@ bool c_rage_bot::ray_hits_hitboxes(const vec3_t& start, const vec3_t& dir_normal
 }
 
 // ============================================================================
-// ХИТШАНС
+// ХИТШАНС - ПРАВИЛЬНЫЙ МЕТОД ИЗ UNKNOWNCHEATS
+// ============================================================================
+// Метод основан на trace-based hitchance: генерируем N лучей с spread/inaccuracy,
+// трассируем каждый, считаем процент попаданий по хитбоксам.
 // ============================================================================
 
 bool c_rage_bot::weapon_is_at_max_accuracy(c_cs_weapon_base_v_data* weapon_data, float inaccuracy)
@@ -761,7 +764,7 @@ bool c_rage_bot::weapon_is_at_max_accuracy(c_cs_weapon_base_v_data* weapon_data,
 
 	float speed = g_ctx->m_local_pawn->m_vec_abs_velocity().length_2d();
 	
-	// ИСПРАВЛЕНИЕ #6: Проверяем флаги более точно
+	// Проверяем флаги более точно
 	bool is_on_ground = (g_ctx->m_local_pawn->m_flags() & FL_ONGROUND) != 0;
 	bool is_in_air = !is_on_ground;
 
@@ -789,81 +792,108 @@ bool c_rage_bot::weapon_is_at_max_accuracy(c_cs_weapon_base_v_data* weapon_data,
 	return false;
 }
 
-vec3_t c_rage_bot::calculate_spread_angles(vec3_t angle, int random_seed, float weapon_inaccuarcy, float weapon_spread)
+// Генерирует направление луча с учетом spread и inaccuracy
+// Использует правильный CS2 метод генерации spread
+vec3_t c_rage_bot::calculate_spread_direction(vec3_t forward, vec3_t right, vec3_t up, float inaccuracy, float spread, int seed)
 {
-	float r1, r2, r3, r4, s1, c1, s2, c2;
+	// Используем seed для детерминированного рандома
+	g_interfaces->m_random_seed(seed);
+	
+	// Генерируем spread компоненты по методу CS2
+	// Два круга: inaccuracy (внутренний) и spread (внешний)
+	float r1 = g_interfaces->m_random_float(0.f, 1.f);
+	float r2 = g_interfaces->m_random_float(0.f, _pi2);
+	float r3 = g_interfaces->m_random_float(0.f, 1.f);
+	float r4 = g_interfaces->m_random_float(0.f, _pi2);
 
-	g_interfaces->m_random_seed(random_seed + 1);
-
-	r1 = g_interfaces->m_random_float(0.f, 1.f);
-	r2 = g_interfaces->m_random_float(0.f, _pi2);
-	r3 = g_interfaces->m_random_float(0.f, 1.f);
-	r4 = g_interfaces->m_random_float(0.f, _pi2);
-
-	c1 = std::cos(r2);
-	c2 = std::cos(r4);
-	s1 = std::sin(r2);
-	s2 = std::sin(r4);
-
-	vec3_t spread = {
-		(c1 * (r1 * weapon_inaccuarcy)) + (c2 * (r3 * weapon_spread)),
-		(s1 * (r1 * weapon_inaccuarcy)) + (s2 * (r3 * weapon_spread))
-	};
-
-	vec3_t vec_forward, vec_right, vec_up;
-	g_math->angle_vectors(angle, vec_forward, vec_right, vec_up);
-
-	return (vec_forward + (vec_right * spread.x) + (vec_up * spread.y)).normalize();
+	// Inaccuracy - зависит от движения, stance, и т.д.
+	float inac_x = std::cos(r2) * (r1 * inaccuracy);
+	float inac_y = std::sin(r2) * (r1 * inaccuracy);
+	
+	// Spread - базовый spread оружия
+	float spread_x = std::cos(r4) * (r3 * spread);
+	float spread_y = std::sin(r4) * (r3 * spread);
+	
+	// Комбинируем
+	float total_x = inac_x + spread_x;
+	float total_y = inac_y + spread_y;
+	
+	// Применяем к направлению
+	vec3_t direction = forward + (right * total_x) + (up * total_y);
+	return direction.normalize();
 }
 
+// НОВЫЙ ПРАВИЛЬНЫЙ МЕТОД ХИТШАНСА
+// Не чекает через скорость, а трассирует реальные spread rays
 int c_rage_bot::calculate_hit_chance(c_cs_player_pawn* pawn, vec3_t angles, c_base_player_weapon* active_weapon, c_cs_weapon_base_v_data* weapon_data, bool no_spread)
 {
 	if (!g_ctx->m_local_pawn->is_alive())
 		return 0;
 
-	if (!pawn)
+	if (!pawn || !m_best_target || !m_best_target->m_best_point)
 		return 0;
 
 	auto* local_data = g_prediction->get_local_data();
-
 	if (!local_data)
 		return 0;
 
+	// No spread = всегда 100%
 	if (no_spread)
 		return 100;
 
 	vec3_t shoot_pos = local_data->m_eye_pos;
 
-	if (m_best_target && m_best_target->m_best_point &&
-		shoot_pos.dist(m_best_target->m_best_point->m_point) > weapon_data->m_range())
+	// Проверка дистанции
+	if (shoot_pos.dist(m_best_target->m_best_point->m_point) > weapon_data->m_range())
 		return 0;
 
-	active_weapon->update_accuracy_penality();
+	// Получаем реальный spread и inaccuracy ИЗ ОРУЖИЯ
+	// НЕ ЧЕРЕЗ СКОРОСТЬ, А НАПРЯМУЮ
+	float weapon_spread = active_weapon->get_spread();
+	float weapon_inaccuracy = active_weapon->get_inaccuracy();
 
-	if (weapon_is_at_max_accuracy(weapon_data, active_weapon->get_inaccuracy()))
+	// Если spread и inaccuracy практически ноль - идеальная точность
+	if (weapon_spread + weapon_inaccuracy <= 0.0001f)
 		return 100;
 
-	const float spread = local_data->m_spread;
-	const float inaccuracy = local_data->m_inaccuracy;
-
-	if (spread + inaccuracy <= 0.f)
+	// Если на максимальной точности (стоим заскопленный и т.д.)
+	if (weapon_is_at_max_accuracy(weapon_data, weapon_inaccuracy))
 		return 100;
 
+	// Количество лучей для трассировки
 	auto& weapon_cfg = get_current_weapon_config();
-	int seed_count = std::clamp(weapon_cfg.m_hit_chance_seed, 0, 256);
+	int seed_count = std::clamp(weapon_cfg.m_hit_chance_seed, 32, 256);
 	if (seed_count == 0)
 		seed_count = 128;
 
-	int hits = 0;
-	for (int seed = 0; seed < seed_count; seed++)
-	{
-		const vec3_t spread_dir = calculate_spread_angles(angles, seed, inaccuracy, spread);
+	// Получаем направляющие векторы
+	vec3_t forward, right, up;
+	g_math->angle_vectors(angles, forward, right, up);
 
-		if (ray_hits_hitboxes(shoot_pos, spread_dir, &m_active_record, weapon_data->m_range()))
+	// Считаем попадания
+	int hits = 0;
+	const float max_range = weapon_data->m_range();
+	
+	for (int i = 0; i < seed_count; ++i)
+	{
+		// Генерируем направление с spread
+		vec3_t spread_direction = calculate_spread_direction(
+			forward, right, up, 
+			weapon_inaccuracy, 
+			weapon_spread, 
+			i
+		);
+
+		// Проверяем попадет ли этот луч по хитбоксам
+		if (ray_hits_hitboxes(shoot_pos, spread_direction, &m_active_record, max_range))
+		{
 			hits++;
+		}
 	}
 
-	return static_cast<int>((static_cast<float>(hits) / static_cast<float>(seed_count)) * 100.f);
+	// Процент попаданий = hitchance
+	int hitchance = static_cast<int>((static_cast<float>(hits) / static_cast<float>(seed_count)) * 100.f);
+	return std::clamp(hitchance, 0, 100);
 }
 
 // ============================================================================

@@ -386,7 +386,7 @@ class c_rage_bot
 	bool ray_intersects_capsule(const vec3_t& start, const vec3_t& dir_normalized, const vec3_t& cap_a, const vec3_t& cap_b, float radius, float max_dist);
 	bool ray_hits_hitboxes(const vec3_t& start, const vec3_t& dir_normalized, lag_record_t* record, float max_dist);
 	bool weapon_is_at_max_accuracy(c_cs_weapon_base_v_data* weapon_data, float inaccuracy);
-	vec3_t calculate_spread_angles(vec3_t angle, int random_seed, float weapon_inaccuarcy, float weapon_spread);
+	vec3_t calculate_spread_direction(vec3_t forward, vec3_t right, vec3_t up, float inaccuracy, float spread, int seed);
 	int calculate_hit_chance(c_cs_player_pawn* pawn, vec3_t angles, c_base_player_weapon* active_weapon, c_cs_weapon_base_v_data* weapon_data, bool no_spread);
 	void process_backtrack(lag_record_t* record);
 	bool can_shoot(c_cs_player_pawn* pawn, c_base_player_weapon* active_weapon);
