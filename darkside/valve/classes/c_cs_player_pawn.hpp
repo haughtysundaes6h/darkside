@@ -258,6 +258,7 @@ class c_player_movement_service {
 public:
 	SCHEMA( m_max_speed, float, "CPlayer_MovementServices", "m_flMaxspeed" );
 	SCHEMA( m_surface_friction, float, "CPlayer_MovementServices_Humanoid", "m_flSurfaceFriction" );
+	SCHEMA( m_duck_amount, float, "CCSPlayer_MovementServices", "m_flDuckAmount" );
 
 	void set_prediction_command( c_user_cmd* user_cmd ) {
 
@@ -298,6 +299,11 @@ public:
 	SCHEMA( m_max_speed, float, "CCSWeaponBaseVData", "m_flMaxSpeed" );
 	SCHEMA( m_bullets, float, "CCSWeaponBaseVData", "m_nNumBullets" );
 	SCHEMA( m_weapon_type, int, "CCSWeaponBaseVData", "m_WeaponType" );
+	SCHEMA( m_inaccuracy_crouch, firing_float_t, "CCSWeaponBaseVData", "m_flInaccuracyCrouch" );
+	SCHEMA( m_inaccuracy_stand, firing_float_t, "CCSWeaponBaseVData", "m_flInaccuracyStand" );
+	SCHEMA( m_inaccuracy_move, firing_float_t, "CCSWeaponBaseVData", "m_flInaccuracyMove" );
+	SCHEMA( m_inaccuracy_jump_initial, firing_float_t, "CCSWeaponBaseVData", "m_flInaccuracyJumpInitial" );
+	SCHEMA( m_inaccuracy_jump_apex, firing_float_t, "CCSWeaponBaseVData", "m_flInaccuracyJumpApex" );
 };
 
 class c_base_player_weapon : public c_econ_entity
@@ -311,6 +317,9 @@ public:
 	SCHEMA( m_clip2, int32_t, "C_BasePlayerWeapon", "m_iClip2" );
 
 	SCHEMA( m_in_reload, bool, "C_CSWeaponBase", "m_bInReload" );
+	SCHEMA( m_recoil_index, float, "C_CSWeaponBase", "m_flRecoilIndex" );
+	SCHEMA( m_accuracy_penalty, float, "C_CSWeaponBase", "m_fAccuracyPenalty" );
+	SCHEMA( m_weapon_mode, int, "C_CSWeaponBase", "m_weaponMode" );
 
 	SCHEMA( m_burst_mode, bool, "C_CSWeaponBase", "m_bBurstMode" );
 	SCHEMA( m_burst_shots_remaining, int, "C_CSWeaponBaseGun", "m_iBurstShotsRemaining" );
@@ -410,6 +419,8 @@ public:
 	SCHEMA( m_item_services, c_cs_player_item_service*, "C_BasePlayerPawn", "m_pItemServices" );
 	SCHEMA( m_scoped, bool, "C_CSPlayerPawn", "m_bIsScoped" );
 	SCHEMA( m_view_offset, vec3_t, "C_BaseModelEntity", "m_vecViewOffset" );
+	SCHEMA( m_eye_angles, vec3_t, "C_CSPlayerPawn", "m_angEyeAngles" );
+	SCHEMA( m_gun_game_immunity, bool, "C_CSPlayerPawn", "m_bGunGameImmunity" );
 
 	vec3_t get_eye_pos( ) {
 		auto* scene_node = m_scene_node( );

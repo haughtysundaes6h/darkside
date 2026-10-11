@@ -1,1292 +1,1542 @@
 #include "rage_bot.hpp"
+
 #include "../../entity_system/entity.hpp"
 #include "../movement/movement.hpp"
 #include "../../render/render.hpp"
 
 #include <cfloat>
+#include <cmath>
 
 // ============================================================================
-// ХРАНЕНИЕ ЗАПИСЕЙ (бектрек-хранилище)
+// Accuracy model
+//
+// Inaccuracy and spread are not a single "speed blob". The game keeps them
+// separate: get_inaccuracy() is the cone from stance/movement/air/penalty,
+// get_spread() is the weapon pattern, and CalculateSpread (client.dll) turns
+// a seed + recoil index + bullet count into the actual offset. Hitchance
+// fires those offsets at the hitbox we are aiming at — not at every hitbox,
+// and not through RandomFloat (that desyncs the game RNG and does not match
+// revolver / negev / shotgun patterns).
 // ============================================================================
 
-void c_rage_bot::store_records()
-{
-	if (!g_interfaces->m_engine->is_in_game() || !g_interfaces->m_engine->is_connected())
+namespace {
+
+constexpr float k_tick = INTERVAL_PER_TICK;
+
+float clampf(float v, float lo, float hi) {
+	return v < lo ? lo : (v > hi ? hi : v);
+}
+
+bool sane(float v, float max_v) {
+	return std::isfinite(v) && v >= 0.f && v <= max_v;
+}
+
+float read_firing(float (&values)[2], int mode) {
+	const float v = values[mode & 1];
+	return sane(v, 2.f) ? v : -1.f;
+}
+
+float air_inaccuracy(float vertical_speed, float jump_initial, float jump_apex) {
+	constexpr float k_sqrt = 17.37795666f;
+	const float value = ((std::sqrt(std::fabs(vertical_speed)) - k_sqrt * 0.25f) * (jump_initial - jump_apex))
+		/ (k_sqrt * 0.75f) + jump_apex;
+	const float cap = jump_initial * 2.f;
+	return clampf(value, 0.f, cap > 0.f ? cap : 1.f);
+}
+
+float convar_float(const char* name, float fallback, float max_v) {
+	auto* var = g_interfaces->m_var ? g_interfaces->m_var->get_by_name(name) : nullptr;
+	if (!var)
+		return fallback;
+	const float value = var->get_float();
+	return sane(value, max_v) ? value : fallback;
+}
+
+bool hull_trace(c_cs_player_pawn* skip, const vec3_t& from, const vec3_t& to,
+	const vec3_t& mins, const vec3_t& maxs, game_trace_t* hit) {
+	if (!g_interfaces->m_trace || !hit)
+		return false;
+	trace_filter_t filter(0x1C3003ull, skip, nullptr, 4);
+	if (!filter.m_vtable)
+		return false;
+	ray_t ray{};
+	ray.m_mins = mins;
+	ray.m_maxs = maxs;
+	ray.type = 2;
+	hit->m_fraction = -1.f;
+	g_interfaces->m_trace->trace_shape(&ray, from, to, &filter, hit);
+	return std::isfinite(hit->m_fraction) && hit->m_fraction >= 0.f && hit->m_fraction <= 1.f;
+}
+
+struct motion_step_t {
+	vec3_t origin{};
+	vec3_t velocity{};
+	int flags{};
+	vec3_t mins{};
+	vec3_t maxs{};
+	float direction{};
+};
+
+void slide_along(motion_step_t& step, c_cs_player_pawn* pawn, game_trace_t& trace) {
+	for (int clip = 0; clip < 2; ++clip) {
+		const float into = step.velocity.dot(trace.m_normal);
+		step.velocity = step.velocity - trace.m_normal * into;
+		const float still_into = step.velocity.dot(trace.m_normal);
+		if (still_into < 0.f)
+			step.velocity = step.velocity - trace.m_normal * still_into;
+
+		const float remaining = (1.f - trace.m_fraction) * k_tick;
+		vec3_t start = trace.m_end;
+		vec3_t end = start + step.velocity * remaining;
+		if (!hull_trace(pawn, start, end, step.mins, step.maxs, &trace) || trace.m_fraction >= 1.f) {
+			step.origin = end;
+			return;
+		}
+	}
+	step.origin = trace.m_end;
+}
+
+void step_movement(motion_step_t& step, c_cs_player_pawn* pawn) {
+	const float gravity = convar_float("sv_gravity", 800.f, 4000.f);
+	const bool grounded = (step.flags & FL_ONGROUND) != 0;
+	if (grounded)
+		step.velocity.z = 0.f;
+	else
+		step.velocity.z -= gravity * k_tick;
+
+	vec3_t end = step.origin + step.velocity * k_tick;
+	game_trace_t trace{};
+	if (!hull_trace(pawn, step.origin, end, step.mins, step.maxs, &trace) || trace.m_fraction >= 1.f)
+		step.origin = end;
+	else
+		slide_along(step, pawn, trace);
+
+	vec3_t ground_end = step.origin;
+	ground_end.z -= 2.f;
+	game_trace_t ground{};
+	step.flags &= ~FL_ONGROUND;
+	if (hull_trace(pawn, step.origin, ground_end, step.mins, step.maxs, &ground)
+		&& ground.m_fraction < 1.f && ground.m_normal.z > 0.7f) {
+		step.flags |= FL_ONGROUND;
+		step.velocity.z = 0.f;
+		step.origin.z = ground.m_end.z;
+	}
+}
+
+struct motion_model_t {
+	float direction{};
+	float yaw_per_tick{};
+	float speed{};
+	float speed_per_tick{};
+	float confidence{};
+	int reliable_ticks{};
+};
+
+motion_model_t analyze_motion(const std::deque<lag_record_t>& records, int max_ticks) {
+	motion_model_t model{};
+	if (records.empty() || max_ticks <= 0)
+		return model;
+
+	const auto& newest = records.front();
+	vec3_t velocity = newest.m_velocity;
+	model.speed = velocity.length_2d();
+	model.direction = rad2deg(std::atan2(velocity.y, velocity.x));
+	model.confidence = model.speed > 8.f ? 0.4f : 0.f;
+	model.reliable_ticks = model.speed > 8.f ? 1 : 0;
+	if (records.size() < 2 || model.speed <= 8.f)
+		return model;
+
+	const auto& previous = records[1];
+	const float dt = newest.m_simulation_time - previous.m_simulation_time;
+	if (!(dt > 0.001f && dt < 0.4f)) {
+		model.confidence = 0.25f;
+		model.reliable_ticks = 1;
+		return model;
+	}
+
+	vec3_t delta = newest.m_origin - previous.m_origin;
+	const float path_speed = delta.length_2d() / dt;
+	const float path_dir = rad2deg(std::atan2(delta.y, delta.x));
+	const float turn = g_math->angle_diff(path_dir, model.direction);
+	const float ticks = (std::max)(dt / k_tick, 1.f);
+	model.yaw_per_tick = turn / ticks;
+	model.speed_per_tick = (model.speed - path_speed) / ticks;
+
+	// A hard direction change is a juke. Predicting 8-16 ticks through it misses.
+	if (std::fabs(turn) > 40.f) {
+		model.yaw_per_tick = 0.f;
+		model.confidence = 0.12f;
+		model.reliable_ticks = 1;
+		return model;
+	}
+	if (std::fabs(model.yaw_per_tick) > 7.f)
+		model.yaw_per_tick = 0.f;
+
+	const float speed_error = std::fabs(model.speed - path_speed) / (std::max)(model.speed, 40.f);
+	model.confidence = clampf(1.f - speed_error, 0.2f, 1.f);
+	if (std::fabs(turn) > 16.f)
+		model.confidence *= 0.65f;
+
+	model.reliable_ticks = std::clamp(static_cast<int>(model.confidence * static_cast<float>(max_ticks) + 0.5f), 1, max_ticks);
+	return model;
+}
+
+int ticks_worth_predicting(const lag_record_t& newest, const motion_model_t& model, int max_ticks) {
+	if (max_ticks <= 0 || model.reliable_ticks <= 0 || model.speed <= 8.f)
+		return 0;
+
+	int stale = 0;
+	if (g_interfaces->m_global_vars && std::isfinite(newest.m_simulation_time)) {
+		const float behind = g_interfaces->m_global_vars->m_current_time - newest.m_simulation_time;
+		if (behind > 0.f)
+			stale = TIME_TO_TICKS(behind);
+	}
+	stale = std::clamp(stale, 0, max_ticks);
+
+	// Lead only when the path is stable. Fast straight runs get one extra tick
+	// so the shot meets them; a strafe does not get a blind 16-tick launch.
+	int lead = 0;
+	if (model.confidence > 0.72f && model.speed > 80.f && std::fabs(model.yaw_per_tick) < 3.5f)
+		lead = 1;
+	if (model.confidence > 0.9f && model.speed > 210.f && std::fabs(model.yaw_per_tick) < 1.5f)
+		lead = 2;
+
+	return std::clamp((std::min)(stale + lead, model.reliable_ticks), 0, max_ticks);
+}
+
+} // namespace
+
+// ============================================================================
+// RECORDS
+// ============================================================================
+
+void lag_record_t::store(c_cs_player_pawn* pawn) {
+	if (!pawn || !pawn->is_player_pawn() || !pawn->is_alive())
 		return;
 
-	if (!g_ctx->m_local_pawn)
+	auto* scene = pawn->m_scene_node();
+	auto* skeleton = scene ? scene->get_skeleton_instance() : nullptr;
+	auto* collision = pawn->m_collision();
+	if (!skeleton || !collision)
 		return;
 
-	static auto sv_maxunlag = g_interfaces->m_var->get_by_name("sv_maxunlag");
-	if ( !sv_maxunlag )
+	auto& model_state = skeleton->m_model_state();
+	auto* bones = model_state.get_bone_data();
+	m_stored_bone_count = std::clamp(model_state.get_bone_count(), 0, 128);
+	if (!bones || m_stored_bone_count <= 0)
+		return;
+
+	std::memcpy(m_bone_data, bones, sizeof(c_bone_data) * m_stored_bone_count);
+	m_pawn = pawn;
+	m_origin = scene->m_abs_origin();
+	m_simulation_time = pawn->m_sim_time();
+	m_mins = collision->m_mins();
+	m_maxs = collision->m_maxs();
+	m_velocity = pawn->m_vec_velocity();
+	m_flags = pawn->m_flags();
+	m_throwing = pawn->is_throwing();
+
+	vec3_t eye = pawn->m_eye_angles();
+	m_eye_angles = (std::isfinite(eye.x) && std::isfinite(eye.y) && std::fabs(eye.y) <= 1080.f) ? eye : vec3_t{};
+
+	m_duck_amount = (m_flags & FL_DUCKING) ? 1.f : 0.f;
+	if (auto* move = pawn->m_movement_services()) {
+		const float duck = move->m_duck_amount();
+		if (std::isfinite(duck) && duck >= 0.f && duck <= 1.f)
+			m_duck_amount = duck;
+	}
+}
+
+void lag_record_t::apply(c_cs_player_pawn* pawn) {
+	if (!pawn || !pawn->is_alive())
+		return;
+	auto* scene = pawn->m_scene_node();
+	auto* skeleton = scene ? scene->get_skeleton_instance() : nullptr;
+	if (!skeleton)
+		return;
+	auto& model_state = skeleton->m_model_state();
+	auto* bones = model_state.get_bone_data();
+	const int count = (std::min)(m_stored_bone_count, std::clamp(model_state.get_bone_count(), 0, 128));
+	if (!bones || count <= 0)
+		return;
+	std::memcpy(m_bone_data_backup, bones, sizeof(c_bone_data) * count);
+	std::memcpy(bones, m_bone_data, sizeof(c_bone_data) * count);
+}
+
+void lag_record_t::reset(c_cs_player_pawn* pawn) {
+	if (!pawn || !pawn->is_alive())
+		return;
+	auto* scene = pawn->m_scene_node();
+	auto* skeleton = scene ? scene->get_skeleton_instance() : nullptr;
+	if (!skeleton)
+		return;
+	auto& model_state = skeleton->m_model_state();
+	auto* bones = model_state.get_bone_data();
+	const int count = (std::min)(m_stored_bone_count, std::clamp(model_state.get_bone_count(), 0, 128));
+	if (!bones || count <= 0)
+		return;
+	std::memcpy(bones, m_bone_data_backup, sizeof(c_bone_data) * count);
+}
+
+void lag_record_t::shift(const vec3_t& delta) {
+	m_origin = m_origin + delta;
+	for (int i = 0; i < m_stored_bone_count; ++i)
+		m_bone_data[i].m_pos = m_bone_data[i].m_pos + delta;
+}
+
+bool lag_record_t::is_valid() const {
+	const auto* local = g_prediction->get_local_data();
+	if (!local || !std::isfinite(m_simulation_time))
+		return false;
+	const float dead = (local->m_tick_base * k_tick) - m_simulation_time;
+	if (!std::isfinite(dead) || dead < -0.2f || dead > 0.2f)
+		return false;
+	vec3_t velocity = m_velocity;
+	return velocity.length() < 4500.f;
+}
+
+void c_rage_bot::store_records() {
+	if (!g_interfaces->m_engine->is_in_game() || !g_interfaces->m_engine->is_connected() || !g_ctx->m_local_pawn)
+		return;
+
+	static auto* sv_maxunlag = g_interfaces->m_var->get_by_name("sv_maxunlag");
+	if (!sv_maxunlag)
 		return;
 	const int max_ticks = std::clamp(TIME_TO_TICKS(sv_maxunlag->get_float()), 1, 64);
 
-	const auto& entity_list = g_entity_system->get("CCSPlayerController");
-	for (int i = 0; i < entity_list.size(); ++i)
-	{
-		auto entity = entity_list[i];
-
-		auto player_controller = reinterpret_cast<c_cs_player_controller*>(entity);
-		if (!player_controller || player_controller == g_ctx->m_local_controller)
+	const auto& entities = g_entity_system->get("CCSPlayerController");
+	for (int i = 0; i < static_cast<int>(entities.size()); ++i) {
+		auto* controller = reinterpret_cast<c_cs_player_controller*>(entities[i]);
+		if (!controller || controller == g_ctx->m_local_controller)
 			continue;
 
-		auto handle = player_controller->get_handle().to_int();
-
-		if (!player_controller->m_pawn_is_alive())
-		{
-			auto player_iterator = m_lag_records.find(handle);
-			if (player_iterator != m_lag_records.end())
-				m_lag_records.erase(player_iterator);
-
+		const int handle = controller->get_handle().to_int();
+		if (!controller->m_pawn_is_alive()) {
+			m_lag_records.erase(handle);
+			m_resolver.erase(handle);
 			continue;
 		}
 
-		auto player_pawn = reinterpret_cast<c_cs_player_pawn*>(g_interfaces->m_entity_system->get_base_entity(player_controller->m_pawn().get_entry_index()));
-		if (!player_pawn)
-		{
-			auto player_iterator = m_lag_records.find(handle);
-			if (player_iterator != m_lag_records.end())
-				m_lag_records.erase(player_iterator);
-
+		auto* pawn = reinterpret_cast<c_cs_player_pawn*>(
+			g_interfaces->m_entity_system->get_base_entity(controller->m_pawn().get_entry_index()));
+		if (!pawn || pawn == g_ctx->m_local_pawn || pawn->m_team_num() == g_ctx->m_local_pawn->m_team_num()) {
+			if (!pawn)
+				m_lag_records.erase(handle);
 			continue;
 		}
 
-		if (player_pawn->m_team_num() == g_ctx->m_local_pawn->m_team_num())
+		static const auto immunity_off = schema_get_offset("C_CSPlayerPawn", "m_bGunGameImmunity");
+		if (immunity_off && *reinterpret_cast<bool*>(reinterpret_cast<std::uintptr_t>(pawn) + immunity_off)) {
+			m_lag_records.erase(handle);
 			continue;
-
-		if (player_pawn == g_ctx->m_local_pawn)
-			continue;
+		}
 
 		auto& records = m_lag_records[handle];
-		const float sim_time = player_pawn->m_sim_time();
-		if (!std::isfinite(sim_time) || ( !records.empty() && records.front().m_simulation_time == sim_time ))
+		const float sim = pawn->m_sim_time();
+		if (!std::isfinite(sim) || (!records.empty() && records.front().m_simulation_time == sim))
 			continue;
+
 		lag_record_t record;
-		record.store(player_pawn);
-		if (record.m_pawn && record.m_stored_bone_count > 0)
-			records.emplace_front(std::move(record));
+		record.store(pawn);
+		if (!record.m_pawn || record.m_stored_bone_count <= 0)
+			continue;
+
+		if (!records.empty()) {
+			const float dt = sim - records.front().m_simulation_time;
+			vec3_t delta = record.m_origin - records.front().m_origin;
+			if (dt > 0.001f && delta.length() > 4000.f * dt)
+				continue;
+		}
+
+		records.emplace_front(std::move(record));
 		while (records.size() > static_cast<std::size_t>(max_ticks))
 			records.pop_back();
 	}
 }
 
 // ============================================================================
-// ХИТБОКСЫ ИЗ МЕНЮ
+// HITBOXES / POINTS
 // ============================================================================
 
-void c_rage_bot::store_hitboxes()
-{
-	auto& weapon_cfg = get_current_weapon_config();
-	const bool* enabled = weapon_cfg.m_hitboxes;
-
-	if (enabled[0])
-		m_hitboxes.emplace_back(HITBOX_HEAD);
-
-	if (enabled[1])
-	{
-		m_hitboxes.emplace_back(HITBOX_CHEST);
-		m_hitboxes.emplace_back(HITBOX_LOWER_CHEST);
-		m_hitboxes.emplace_back(HITBOX_UPPER_CHEST);
-	}
-
-	if (enabled[2])
-	{
-		m_hitboxes.emplace_back(HITBOX_PELVIS);
-		m_hitboxes.emplace_back(HITBOX_STOMACH);
-	}
-
-	if (enabled[3])
-	{
-		m_hitboxes.emplace_back(HITBOX_RIGHT_HAND);
-		m_hitboxes.emplace_back(HITBOX_LEFT_HAND);
-		m_hitboxes.emplace_back(HITBOX_RIGHT_UPPER_ARM);
-		m_hitboxes.emplace_back(HITBOX_RIGHT_FOREARM);
-		m_hitboxes.emplace_back(HITBOX_LEFT_UPPER_ARM);
-		m_hitboxes.emplace_back(HITBOX_LEFT_FOREARM);
-	}
-
-	if (enabled[4])
-	{
-		m_hitboxes.emplace_back(HITBOX_RIGHT_THIGH);
-		m_hitboxes.emplace_back(HITBOX_LEFT_THIGH);
-
-		m_hitboxes.emplace_back(HITBOX_RIGHT_CALF);
-		m_hitboxes.emplace_back(HITBOX_LEFT_CALF);
-	}
-
-	if (enabled[5])
-	{
-		m_hitboxes.emplace_back(HITBOX_RIGHT_FOOT);
-		m_hitboxes.emplace_back(HITBOX_LEFT_FOOT);
+int c_rage_bot::get_hitbox_from_menu(int hitbox) const {
+	switch (hitbox) {
+	case HITBOX_HEAD: return 0;
+	case HITBOX_CHEST:
+	case HITBOX_LOWER_CHEST:
+	case HITBOX_UPPER_CHEST: return 1;
+	case HITBOX_PELVIS:
+	case HITBOX_STOMACH: return 2;
+	case HITBOX_RIGHT_HAND:
+	case HITBOX_LEFT_HAND:
+	case HITBOX_RIGHT_UPPER_ARM:
+	case HITBOX_RIGHT_FOREARM:
+	case HITBOX_LEFT_UPPER_ARM:
+	case HITBOX_LEFT_FOREARM: return 3;
+	case HITBOX_RIGHT_THIGH:
+	case HITBOX_LEFT_THIGH:
+	case HITBOX_RIGHT_CALF:
+	case HITBOX_LEFT_CALF: return 4;
+	case HITBOX_RIGHT_FOOT:
+	case HITBOX_LEFT_FOOT: return 5;
+	default: return -1;
 	}
 }
 
-// ============================================================================
-// ВЫБОР ЗАПИСИ (нормальный бектрек)
-// ============================================================================
-
-float c_rage_bot::quick_score_record(lag_record_t* record, vec3_t shoot_pos, bool is_taser)
-{
-	if (!record || !record->m_pawn || record->m_stored_bone_count <= 0)
-		return -1.f;
-
-	c_base_player_weapon* weapon = g_ctx->m_local_pawn->get_active_weapon();
-	if (!weapon)
-		return -1.f;
-
-	c_cs_weapon_base_v_data* weapon_data = weapon->get_weapon_data();
-	if (!weapon_data)
-		return -1.f;
-
-	auto* pawn = record->m_pawn;
-
-	float best = -1.f;
-	const int hitboxes_to_test[] = { HITBOX_HEAD, HITBOX_CHEST };
-
-	record->apply(pawn);
-
-	for (const int hitbox : hitboxes_to_test)
-	{
-		hitbox_data_t data = get_hitbox_data(pawn, hitbox, record);
-		if (data.m_invalid_data)
-			continue;
-
-		vec3_t center = (data.m_mins + data.m_maxs) * 0.5f;
-		vec3_t world_center{};
-		g_math->vector_transform(center, data.m_matrix, world_center);
-
-		penetration_data_t pen_data{};
-		if (g_auto_wall->fire_bullet(shoot_pos, world_center, pawn, weapon_data, pen_data, is_taser))
-			best = (std::max)(best, pen_data.m_damage);
-	}
-
-	record->reset(pawn);
-	return best;
+c_config_system::weapon_config_t& c_rage_bot::weapon_config() const {
+	auto* pawn = g_ctx->m_local_pawn;
+	auto* weapon = pawn ? pawn->get_active_weapon() : nullptr;
+	auto* data = weapon ? weapon->get_weapon_data() : nullptr;
+	if (!data)
+		return g_cfg->rage_bot.m_weapon_config[WEAPON_GROUP_GENERAL];
+	const auto group = c_config_system::get_weapon_group(data->m_weapon_type(), weapon->get_item_def_index());
+	return g_cfg->rage_bot.get_weapon_config(static_cast<int>(group));
 }
 
-lag_record_t* c_rage_bot::select_record(int handle, int min_damage)
-{
-	if (!g_ctx->m_local_pawn->is_alive())
-		return nullptr;
-
-	auto records_it = m_lag_records.find(handle);
-	if (records_it == m_lag_records.end())
-		return nullptr;
-	auto& records = records_it->second;
-
-	if (records.empty())
-		return nullptr;
-
-	auto& weapon_cfg = get_current_weapon_config();
-	const bool backtrack = weapon_cfg.m_backtrack;
-	int scan_depth = backtrack ? std::clamp(weapon_cfg.m_backtrack_ticks, 0, 64) : 1;
-	if (scan_depth == 0)
-		scan_depth = static_cast<int>(records.size());
-
-	const auto* local_data = g_prediction->get_local_data();
-	if (!local_data)
-		return nullptr;
-
-	const vec3_t shoot_pos = local_data->m_eye_pos;
-	const bool is_taser = [&]() {
-		auto* weapon = g_ctx->m_local_pawn->get_active_weapon();
-		auto* data = weapon ? weapon->get_weapon_data() : nullptr;
-		return data && data->m_weapon_type() == WEAPONTYPE_TASER;
-	}();
-
-	lag_record_t* newest_valid = nullptr;
-	lag_record_t* best = nullptr;
-	float best_score = -1.f;
-	int checked = 0;
-
-	// ИСПРАВЛЕНИЕ #8: Более строгий отбор записей с учетом позиции
-	lag_record_t* prev_record = nullptr;
-	for (auto& record : records)
-	{
-		if (!record.m_pawn || record.m_stored_bone_count <= 0 || !record.is_valid())
-			continue;
-
-		// Проверяем на телепорт/багованное движение между записями
-		if (prev_record && std::isfinite(prev_record->m_simulation_time) && 
-		    std::isfinite(record.m_simulation_time)) {
-			const float time_delta = prev_record->m_simulation_time - record.m_simulation_time;
-			vec3_t pos_delta = prev_record->m_origin - record.m_origin;
-			const float distance = pos_delta.length();
-			
-			// Если дистанция слишком большая для временного промежутка - пропускаем
-			if (time_delta > 0.001f) {
-				const float max_possible_dist = 5000.f * time_delta; // Макс. скорость * время
-				if (distance > max_possible_dist) {
-					// Телепорт/лаг - пропускаем эту запись
-					continue;
-				}
-			}
-		}
-
-		if (!newest_valid)
-			newest_valid = &record;
-
-		if (++checked > scan_depth)
-			break;
-
-		const float score = quick_score_record(&record, shoot_pos, is_taser);
-		if (score > best_score)
-		{
-			best_score = score;
-			best = &record;
-		}
-
-		if (score >= static_cast<float>(record.m_pawn->m_health()))
-			break;
-			
-		prev_record = &record;
+void c_rage_bot::store_hitboxes() {
+	const bool* enabled = weapon_config().m_hitboxes;
+	if (enabled[0]) m_hitboxes.push_back(HITBOX_HEAD);
+	if (enabled[1]) {
+		m_hitboxes.push_back(HITBOX_UPPER_CHEST);
+		m_hitboxes.push_back(HITBOX_CHEST);
+		m_hitboxes.push_back(HITBOX_LOWER_CHEST);
 	}
-
-	if (best && best_score >= static_cast<float>(min_damage))
-		return best;
-
-	return newest_valid;
-}
-
-// ============================================================================
-// ЦЕЛИ
-// ============================================================================
-
-void c_rage_bot::find_targets()
-{
-	m_aim_targets.clear();
-	if (!g_ctx->m_local_pawn->is_alive())
-		return;
-
-	auto entities = g_entity_system->get("CCSPlayerController");
-
-	for (auto entity : entities)
-	{
-		if (!entity)
-			continue;
-
-		auto player_controller = reinterpret_cast<c_cs_player_controller*>(entity);
-		if (!player_controller || player_controller == g_ctx->m_local_controller)
-			continue;
-
-		int handle = player_controller->get_handle().to_int();
-
-		lag_record_t* best_record = this->select_record(handle, 1);
-
-		if (!best_record)
-			continue;
-
-		m_aim_targets.insert_or_assign(handle, aim_target_t(best_record));
+	if (enabled[2]) {
+		m_hitboxes.push_back(HITBOX_STOMACH);
+		m_hitboxes.push_back(HITBOX_PELVIS);
+	}
+	if (enabled[3]) {
+		m_hitboxes.push_back(HITBOX_RIGHT_UPPER_ARM);
+		m_hitboxes.push_back(HITBOX_LEFT_UPPER_ARM);
+		m_hitboxes.push_back(HITBOX_RIGHT_FOREARM);
+		m_hitboxes.push_back(HITBOX_LEFT_FOREARM);
+		m_hitboxes.push_back(HITBOX_RIGHT_HAND);
+		m_hitboxes.push_back(HITBOX_LEFT_HAND);
+	}
+	if (enabled[4]) {
+		m_hitboxes.push_back(HITBOX_RIGHT_THIGH);
+		m_hitboxes.push_back(HITBOX_LEFT_THIGH);
+		m_hitboxes.push_back(HITBOX_RIGHT_CALF);
+		m_hitboxes.push_back(HITBOX_LEFT_CALF);
+	}
+	if (enabled[5]) {
+		m_hitboxes.push_back(HITBOX_RIGHT_FOOT);
+		m_hitboxes.push_back(HITBOX_LEFT_FOOT);
 	}
 }
 
-// ============================================================================
-// МУЛЬТИПОИНТЫ
-// ============================================================================
+hitbox_data_t c_rage_bot::get_hitbox_data(c_cs_player_pawn* pawn, int hitbox_id, const lag_record_t* record) const {
+	hitbox_data_t out{};
+	if (!pawn)
+		return out;
+	auto* scene = pawn->m_scene_node();
+	auto* skeleton = scene ? scene->get_skeleton_instance() : nullptr;
+	if (!skeleton)
+		return out;
+	auto& model_state = skeleton->m_model_state();
+	auto& model = model_state.m_model();
+	if (!model)
+		return out;
+	auto* hitbox = model->get_hitbox(hitbox_id);
+	if (!hitbox)
+		return out;
+	const int bone = pawn->get_bone_index(hitbox->m_bone_name);
+	if (bone < 0 || bone >= 128)
+		return out;
 
-float c_rage_bot::calc_point_scale(const vec3_t& point, float hitbox_radius)
-{
-	const auto* local_data = g_prediction->get_local_data();
-	if (!local_data || hitbox_radius <= 0.f)
+	out.m_num_hitbox = hitbox_id;
+	out.m_num_bone = bone;
+	out.m_num_hitgroup = hitbox->m_hitgroup;
+	out.m_radius = hitbox->m_shape_radius;
+	out.m_mins = hitbox->m_vec_min;
+	out.m_maxs = hitbox->m_vec_maxs;
+	out.m_invalid_data = false;
+
+	if (record && bone < record->m_stored_bone_count)
+		out.m_matrix = g_math->transform_to_matrix(const_cast<c_bone_data&>(record->m_bone_data[bone]));
+	else if (auto* bones = model_state.get_bone_data())
+		out.m_matrix = g_math->transform_to_matrix(bones[bone]);
+	else
+		out.m_invalid_data = true;
+	return out;
+}
+
+vec3_t c_rage_bot::get_removed_aim_punch_angle(c_cs_player_pawn* local_player) const {
+	using fn_t = void(__fastcall*)(void*, vec3_t*, bool);
+	static fn_t fn = reinterpret_cast<fn_t>(g_opcodes->scan_absolute(
+		g_modules->m_modules.client_dll.get_name(), andromeda::get_removed_aim_punch, 0x1));
+	vec3_t punch{};
+	if (fn)
+		fn(local_player, &punch, true);
+	return punch;
+}
+
+float c_rage_bot::point_scale(const vec3_t& point, float radius, float inaccuracy, float spread) const {
+	const auto* local = g_prediction->get_local_data();
+	if (!local || radius <= 0.1f)
 		return 0.f;
-
-	float spread = local_data->m_spread + local_data->m_inaccuracy;
-	if (!(spread > 0.f))
-		return 95.f;
-
-	vec3_t pt = point;
-	float distance = pt.dist(local_data->m_eye_pos);
-	if (distance <= 1.f)
-		return 95.f;
-
-	float cone_radius = distance * std::tan(spread);
-	float scale = ((hitbox_radius - cone_radius) / hitbox_radius) * 100.f;
-
-	return std::clamp(scale, 0.f, 95.f);
+	const float cone = inaccuracy + spread;
+	vec3_t sample = point;
+	const float distance = sample.dist(local->m_eye_pos);
+	if (!(cone > 0.00005f) || distance < 1.f)
+		return 90.f;
+	const float cone_radius = distance * std::tan(cone);
+	return clampf(((radius - cone_radius) / radius) * 100.f, 0.f, 92.f);
 }
 
-vec3_t c_rage_bot::transform_point(matrix3x4_t matrix, vec3_t point)
-{
-	vec3_t result{ };
-	g_math->vector_transform(point, matrix, result);
-	return result;
-}
+bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_point_t>& points,
+	float inaccuracy, float spread, int resolver_side) {
+	if (!record || !record->m_pawn)
+		return false;
+	hitbox_data_t data = get_hitbox_data(record->m_pawn, hitbox, record);
+	if (data.m_invalid_data)
+		return false;
 
-std::vector<vec3_t> c_rage_bot::calculate_sphere_points(float radius, int num_points)
-{
-	std::vector<vec3_t> points;
-	points.reserve(num_points);
+	const int menu = get_hitbox_from_menu(hitbox);
+	if (menu < 0)
+		return false;
 
-	if (num_points < 2)
-		return { vec3_t(0.f, 0.f, 0.f) };
+	vec3_t mins = data.m_mins;
+	vec3_t maxs = data.m_maxs;
+	vec3_t center = (mins + maxs) * 0.5f;
+	vec3_t world{};
+	g_math->vector_transform(center, data.m_matrix, world);
 
-	const float phi = _pi * (3.0f - std::sqrt(5.0f));
-
-	for (int i = 0; i < num_points; ++i)
-	{
-		float y = 1.f - (i / float(num_points - 1)) * 2.f;
-		const float r_y = std::sqrt((std::max)(0.f, 1.f - y * y));
-
-		float theta = phi * i;
-
-		float x = std::cos(theta) * r_y;
-		float z = std::sin(theta) * r_y;
-
-		points.push_back({ x * radius, y * radius, z * radius });
+	if (hitbox == HITBOX_HEAD && resolver_side != 0 && data.m_radius > 0.f) {
+		vec3_t lateral{ data.m_matrix[0][1], data.m_matrix[1][1], data.m_matrix[2][1] };
+		if (lateral.length() > 0.01f) {
+			lateral = lateral.normalize();
+			world = world + lateral * (data.m_radius * 0.45f * static_cast<float>(resolver_side));
+		}
 	}
+	points.emplace_back(world, hitbox, true);
 
-	return points;
-}
+	auto& cfg = weapon_config();
+	if (!cfg.m_multi_points[menu])
+		return true;
 
-std::vector<vec3_t> c_rage_bot::calculate_capsule_points(float radius, matrix3x4_t matrix, hitbox_data_t hitbox, int rings, int per_ring)
-{
-	std::vector<vec3_t> points;
-	points.reserve(rings * per_ring);
+	float scale = hitbox == HITBOX_HEAD ? static_cast<float>(cfg.m_head_scale) : static_cast<float>(cfg.m_body_scale);
+	if (scale < 0.f)
+		scale = point_scale(world, data.m_radius, inaccuracy, spread);
+	const float radius = data.m_radius * (scale / 100.f);
+	if (radius <= 0.05f)
+		return true;
 
-	vec3_t axis = hitbox.m_maxs - hitbox.m_mins;
-	float axis_len = axis.length();
-	vec3_t axis_dir = axis_len > 0.001f ? axis / axis_len : vec3_t(1.f, 0.f, 0.f);
+	const auto* local = g_prediction->get_local_data();
+	if (!local)
+		return true;
+	vec3_t to_us = local->m_eye_pos - world;
+	vec3_t aim = g_math->aim_direction(world, local->m_eye_pos);
+	vec3_t forward, right, up;
+	g_math->angle_vectors(aim, forward, right, up);
+	(void)to_us;
 
-	vec3_t ref = std::fabs(axis_dir.y) < 0.9f ? vec3_t(0.f, 1.f, 0.f) : vec3_t(1.f, 0.f, 0.f);
-	vec3_t temp = axis_dir * axis_dir.dot(ref);
-	vec3_t ring_u = ref - temp;
-	float u_len = ring_u.length();
-	ring_u = u_len < 0.0001f ? vec3_t(0.f, 0.f, 1.f) : ring_u / u_len;
-	vec3_t ring_v = {
-		axis_dir.y * ring_u.z - axis_dir.z * ring_u.y,
-		axis_dir.z * ring_u.x - axis_dir.x * ring_u.z,
-		axis_dir.x * ring_u.y - axis_dir.y * ring_u.x
+	auto push = [&](const vec3_t& offset) {
+		points.emplace_back(world + offset, hitbox, false);
 	};
 
-	vec3_t ring_start = hitbox.m_mins + axis_dir * hitbox.m_radius;
-	vec3_t ring_end = hitbox.m_maxs - axis_dir * hitbox.m_radius;
-
-	for (int ring = 0; ring < rings; ++ring)
-	{
-		float t_val = rings == 1 ? 0.5f : float(ring) / float(rings - 1);
-		vec3_t diff = ring_end - ring_start;
-		vec3_t ring_center = ring_start + diff * t_val;
-
-		for (int p = 0; p < per_ring; ++p)
-		{
-			float theta = _pi2 * float(p) / float(per_ring);
-			float cu = std::cos(theta) * radius;
-			float su = std::sin(theta) * radius;
-
-			vec3_t point_local = {
-				ring_center.x + ring_u.x * cu + ring_v.x * su,
-				ring_center.y + ring_u.y * cu + ring_v.y * su,
-				ring_center.z + ring_u.z * cu + ring_v.z * su
-			};
-
-			vec3_t world{};
-			g_math->vector_transform(point_local, matrix, world);
-			points.push_back(world);
-		}
-	}
-
-	return points;
-}
-
-bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_point_t>& points)
-{
-	if (!record)
-		return false;
-
-	c_cs_player_pawn* pawn = record->m_pawn;
-
-	if (!pawn || !pawn->is_player_pawn() || !pawn->is_alive())
-		return false;
-
-	hitbox_data_t hitbox_data = get_hitbox_data(pawn, hitbox, record);
-
-	if (hitbox_data.m_invalid_data)
-		return false;
-
-	auto* local_data = g_prediction->get_local_data();
-	if (!local_data)
-		return false;
-
-	const int hitbox_from_menu = this->get_hitbox_from_menu(hitbox);
-	if (hitbox_from_menu == -1)
-		return false;
-
-	const matrix3x4_t matrix = g_math->transform_to_matrix(record->m_bone_data[hitbox_data.m_num_bone]);
-
-	const vec3_t center = (hitbox_data.m_mins + hitbox_data.m_maxs) * 0.5f;
-	const vec3_t world_center = transform_point(matrix, center);
-	points.emplace_back(world_center, hitbox, true);
-
-	auto& weapon_cfg = get_current_weapon_config();
-	if (!weapon_cfg.m_multi_points[hitbox_from_menu])
-		return true;
-
-	float scale = (hitbox == HITBOX_HEAD) ? static_cast<float>(weapon_cfg.m_head_scale)
-		: static_cast<float>(weapon_cfg.m_body_scale);
-	if (scale < 0.f)
-		scale = calc_point_scale(world_center, hitbox_data.m_radius);
-
-	const float radius = hitbox_data.m_radius * (scale / 100.f);
-	if (radius <= 0.01f)
-		return true;
-
-	if (hitbox == HITBOX_HEAD)
-	{
-		const auto sphere = calculate_sphere_points(radius, 15);
-		for (const auto& offset : sphere)
-			points.emplace_back(world_center + offset, hitbox);
-
+	if (hitbox == HITBOX_HEAD) {
+		push(up * radius);
+		push((up - forward).normalize() * radius);
+		push(right * radius);
+		push(right * -radius);
+		push((up + right).normalize() * radius * 0.85f);
+		push((up - right).normalize() * radius * 0.85f);
 		return true;
 	}
 
-	const bool is_torso = hitbox_from_menu == 1 || hitbox_from_menu == 2;
-	const int rings = is_torso ? 3 : 2;
-	auto capsule = calculate_capsule_points(radius, matrix, hitbox_data, rings, 6);
-	for (const auto& point : capsule)
-		points.emplace_back(point, hitbox);
-
+	push(right * radius);
+	push(right * -radius);
+	if (menu == 1 || menu == 2) {
+		push(up * radius * 0.65f);
+		push(up * -radius * 0.45f);
+	}
+	vec3_t cap_a{}, cap_b{};
+	g_math->vector_transform(data.m_mins, data.m_matrix, cap_a);
+	g_math->vector_transform(data.m_maxs, data.m_matrix, cap_b);
+	points.emplace_back(cap_a, hitbox, false);
+	points.emplace_back(cap_b, hitbox, false);
 	return true;
 }
 
-// ============================================================================
-// ВЫБОР ТОЧКИ
-// ============================================================================
+aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float inaccuracy, float spread, int resolver_side) {
+	aim_point_t best{};
+	damage = 0.f;
+	if (!record || !record->m_pawn || !g_ctx->m_local_pawn)
+		return best;
 
-aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage)
-{
-	aim_point_t best_point{ vec3_t(0.f, 0.f, 0.f), -1 };
+	auto* weapon = g_ctx->m_local_pawn->get_active_weapon();
+	auto* weapon_data = weapon ? weapon->get_weapon_data() : nullptr;
+	const auto* local = g_prediction->get_local_data();
+	if (!weapon_data || !local)
+		return best;
 
-	if (!g_ctx->m_local_pawn->is_alive())
-		return best_point;
-
-	if (!record->m_pawn || !record->m_pawn->is_alive())
-		return best_point;
-
-	c_base_player_weapon* weapon = g_ctx->m_local_pawn->get_active_weapon();
-
-	c_cs_weapon_base_v_data* weapon_data = weapon ? weapon->get_weapon_data() : nullptr;
-
-	if (!weapon_data)
-		return best_point;
-
-	auto* local_data = g_prediction->get_local_data();
-
-	if (!local_data)
-		return best_point;
-
-	const vec3_t shoot_pos = local_data->m_eye_pos;
-
-	const bool is_taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
-
-	auto& weapon_cfg = get_current_weapon_config();
-	const bool prefer_body = weapon_cfg.m_prefer_body_aim;
-	const bool allow_penetration = weapon_cfg.m_penetration;
-	const int target_health = record->m_pawn->m_health();
+	const bool taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
+	const bool allow_pen = weapon_config().m_penetration;
+	const bool prefer_body = weapon_config().m_prefer_body_aim;
+	const int health = record->m_pawn->m_health();
+	vec3_t eye = local->m_eye_pos;
 
 	float best_damage = 0.f;
-	float best_body_damage = 0.f;
-	float best_center_damage = 0.f;
-	int best_center_hitbox = -1;
-	bool found_any = false;
-	bool reached_lethal = false;
+	float best_body = 0.f;
+	bool lethal = false;
 
-	for (auto& hitbox : m_hitboxes)
-	{
-		if (prefer_body && hitbox == HITBOX_HEAD && best_body_damage >= static_cast<float>(target_health) * 0.5f)
+	record->apply(record->m_pawn);
+	for (int hitbox : m_hitboxes) {
+		if (prefer_body && hitbox == HITBOX_HEAD && best_body >= static_cast<float>(health))
 			continue;
 
 		std::vector<aim_point_t> points;
-		if (!multi_points(record, hitbox, points))
+		if (!multi_points(record, hitbox, points, inaccuracy, spread, resolver_side))
 			continue;
 
-		for (auto& point : points)
-		{
-			penetration_data_t pen_data{};
-
-			if (!g_auto_wall->fire_bullet(shoot_pos, point.m_point, record->m_pawn, weapon_data, pen_data, is_taser))
+		for (auto& point : points) {
+			penetration_data_t pen{};
+			if (!g_auto_wall->fire_bullet(eye, point.m_point, record->m_pawn, weapon_data, pen, taser))
+				continue;
+			if (!allow_pen && pen.m_penetrated)
 				continue;
 
-			if (!allow_penetration && pen_data.m_penetrated)
+			point.m_damage = pen.m_damage;
+			point.m_penetrated = pen.m_penetrated;
+			const bool head = point.m_hitbox == HITBOX_HEAD;
+			if (!head && point.m_damage > best_body)
+				best_body = point.m_damage;
+
+			if (prefer_body && head && point.m_damage < best_body * 1.2f)
 				continue;
-
-			point.m_damage = pen_data.m_damage;
-			point.m_penetrated = pen_data.m_penetrated;
-
-			const bool is_head = point.m_hitbox == HITBOX_HEAD;
-
-			if (point.m_center && pen_data.m_damage > best_center_damage)
-			{
-				best_center_damage = pen_data.m_damage;
-				best_center_hitbox = point.m_hitbox;
-			}
-
-			if (point.m_damage > best_damage)
-			{
-				if (prefer_body && is_head && point.m_damage < best_body_damage * 1.25f)
-					continue;
-
-				best_point = point;
+			if (point.m_damage > best_damage) {
+				best = point;
 				best_damage = point.m_damage;
-				found_any = true;
 			}
-
-			if (!is_head && point.m_damage > best_body_damage)
-				best_body_damage = point.m_damage;
-
-			if (best_damage >= static_cast<float>(target_health))
-			{
-				reached_lethal = true;
+			if (best_damage >= static_cast<float>(health)) {
+				lethal = true;
 				break;
 			}
 		}
-
-		if (reached_lethal)
+		if (lethal)
 			break;
 	}
-
-	if (found_any && best_center_hitbox != -1 && best_center_damage >= best_damage * 0.85f)
-	{
-		for (auto& hitbox : m_hitboxes)
-		{
-			hitbox_data_t data = get_hitbox_data(record->m_pawn, hitbox, record);
-			if (data.m_invalid_data || data.m_num_hitbox != best_center_hitbox)
-				continue;
-
-			vec3_t center = (data.m_mins + data.m_maxs) * 0.5f;
-			vec3_t world_center{};
-			g_math->vector_transform(center, data.m_matrix, world_center);
-
-			best_point = aim_point_t(world_center, best_center_hitbox, true);
-			best_point.m_damage = best_center_damage;
-			best_damage = best_center_damage;
-			break;
-		}
-	}
+	record->reset(record->m_pawn);
 
 	damage = best_damage;
-	return best_point;
+	return best;
+}
+
+float c_rage_bot::predict_inaccuracy(c_base_player_weapon* weapon, c_cs_weapon_base_v_data* data,
+	float speed, float vertical_speed, bool on_ground, bool ducking) const {
+	if (!weapon)
+		return 1.f;
+
+	const bool scoped = g_ctx->m_local_pawn && g_ctx->m_local_pawn->m_scoped();
+	int mode = weapon->m_weapon_mode();
+	if (mode != 0 && mode != 1)
+		mode = scoped ? 1 : 0;
+
+	float penalty = weapon->m_accuracy_penalty();
+	if (!sane(penalty, 2.f))
+		penalty = 0.f;
+
+	if (!data)
+		return weapon->get_inaccuracy();
+
+	if (!on_ground) {
+		const float initial = read_firing(data->m_inaccuracy_jump_initial(), mode);
+		const float apex = read_firing(data->m_inaccuracy_jump_apex(), mode);
+		if (initial >= 0.f && apex >= 0.f)
+			return air_inaccuracy(vertical_speed, initial, apex) + penalty;
+		return weapon->get_inaccuracy();
+	}
+
+	const float base = ducking
+		? read_firing(data->m_inaccuracy_crouch(), mode)
+		: read_firing(data->m_inaccuracy_stand(), mode);
+	float move = read_firing(data->m_inaccuracy_move(), mode);
+	if (base < 0.f)
+		return weapon->get_inaccuracy();
+	if (move < 0.f)
+		move = 0.f;
+
+	float max_speed = weapon->get_max_speed();
+	if (!sane(max_speed, 500.f))
+		max_speed = 250.f;
+	const float lo = max_speed * 0.34f;
+	const float hi = max_speed * 0.95f;
+	float blend = 0.f;
+	if (speed > lo && hi > lo)
+		blend = clampf((speed - lo) / (hi - lo), 0.f, 1.f);
+	return base + move * blend + penalty;
+}
+
+bool c_rage_bot::at_max_accuracy(c_cs_weapon_base_v_data* data, c_base_player_weapon* weapon, float inaccuracy) const {
+	auto* pawn = g_ctx->m_local_pawn;
+	if (!pawn || !data)
+		return false;
+	const bool ground = (pawn->m_flags() & FL_ONGROUND) != 0;
+	const float speed = pawn->m_vec_abs_velocity().length_2d();
+	if (!ground) {
+		const float apex = read_firing(data->m_inaccuracy_jump_apex(), pawn->m_scoped() ? 1 : 0);
+		float penalty = weapon ? weapon->m_accuracy_penalty() : 0.f;
+		if (!sane(penalty, 2.f))
+			penalty = 0.f;
+		return apex >= 0.f && inaccuracy <= apex + penalty + 0.001f;
+	}
+	if (data->m_weapon_type() == WEAPONTYPE_SNIPER_RIFLE) {
+		if (!pawn->m_scoped())
+			return false;
+		const bool duck = (pawn->m_flags() & FL_DUCKING) != 0;
+		const float scale = duck ? 300.f : 170.f;
+		const float rounded = std::floor(inaccuracy * scale) / scale;
+		return speed <= (duck ? 10.f : 0.1f) && rounded < inaccuracy;
+	}
+	const float max_speed = weapon ? weapon->get_max_speed() : 250.f;
+	return speed <= max_speed * 0.34f;
 }
 
 // ============================================================================
-// ВЫБОР ЦЕЛИ
+// SPREAD / HITCHANCE
 // ============================================================================
 
-void c_rage_bot::select_target()
-{
-	if (!g_ctx->m_local_pawn->is_alive())
+bool c_rage_bot::game_spread(c_base_player_weapon* weapon, int seed, float inaccuracy, float spread, float& out_x, float& out_y) const {
+	using fn_t = void(__fastcall*)(std::int16_t, int, int, std::uint32_t, float, float, float, float*, float*);
+	static fn_t fn = reinterpret_cast<fn_t>(g_opcodes->scan(
+		g_modules->m_modules.client_dll.get_name(), andromeda::calc_spread));
+	if (!weapon)
+		return false;
+
+	auto* data = weapon->get_weapon_data();
+	int bullets = data ? static_cast<int>(data->m_bullets()) : 1;
+	if (bullets < 1)
+		bullets = 1;
+	float recoil = weapon->m_recoil_index();
+	if (!sane(recoil, 32.f))
+		recoil = 0.f;
+
+	if (fn) {
+		fn(static_cast<std::int16_t>(weapon->get_item_def_index()), bullets, 0,
+			static_cast<std::uint32_t>(seed + 1), inaccuracy, spread, recoil, &out_x, &out_y);
+		return std::isfinite(out_x) && std::isfinite(out_y);
+	}
+
+	// Pattern miss only. Same split the game uses (inaccuracy disk + spread disk),
+	// but a private LCG so we never touch the client's RandomFloat state.
+	auto lcg = [](std::uint32_t& s) { s = s * 1664525u + 1013904223u; return s; };
+	std::uint32_t state = static_cast<std::uint32_t>(seed + 1) * 747796405u + static_cast<std::uint32_t>(bullets);
+	auto unit = [&]() { return static_cast<float>(lcg(state) & 0xFFFFFF) / static_cast<float>(0x1000000); };
+	const float r1 = unit();
+	const float r2 = unit() * _pi2;
+	const float r3 = unit();
+	const float r4 = unit() * _pi2;
+	out_x = std::cos(r2) * r1 * inaccuracy + std::cos(r4) * r3 * spread;
+	out_y = std::sin(r2) * r1 * inaccuracy + std::sin(r4) * r3 * spread;
+	return true;
+}
+
+bool c_rage_bot::ray_capsule(const vec3_t& start, const vec3_t& dir, const vec3_t& cap_a, const vec3_t& cap_b,
+	float radius, float max_dist) const {
+	vec3_t axis = cap_b - cap_a;
+	vec3_t rel = cap_a - start;
+	const float a = axis.dot(axis);
+	const float e = dir.dot(dir);
+	const float b = axis.dot(dir);
+	const float c = axis.dot(rel);
+	const float f = dir.dot(rel);
+	const float denom = a * e - b * b;
+
+	float s = 0.f;
+	float t = 0.f;
+	if (a < 1e-6f || denom < 1e-6f)
+		t = e > 1e-6f ? f / e : 0.f;
+	else {
+		t = (f * a - c * b) / denom;
+		s = a > 1e-6f ? (t * b - c) / a : 0.f;
+		s = clampf(s, 0.f, 1.f);
+	}
+	t = clampf(t, 0.f, max_dist);
+	if (a > 1e-6f)
+		s = clampf((t * b - c) / a, 0.f, 1.f);
+
+	vec3_t on_ray = start + dir * t;
+	vec3_t on_cap = cap_a + axis * s;
+	return on_ray.dist(on_cap) <= radius;
+}
+
+int c_rage_bot::hitchance(const vec3_t& eye, const vec3_t& angles, lag_record_t* record, int hitbox,
+	c_base_player_weapon* weapon, float inaccuracy, float spread, int samples, int required) const {
+	if (!record || !record->m_pawn || !weapon || samples <= 0)
+		return 0;
+	if (inaccuracy + spread <= 0.00005f)
+		return 100;
+
+	hitbox_data_t data = get_hitbox_data(record->m_pawn, hitbox, record);
+	if (data.m_invalid_data || data.m_radius <= 0.f)
+		return 0;
+
+	vec3_t cap_a{}, cap_b{};
+	g_math->vector_transform(data.m_mins, data.m_matrix, cap_a);
+	g_math->vector_transform(data.m_maxs, data.m_matrix, cap_b);
+
+	vec3_t forward, right, up;
+	g_math->angle_vectors(angles, forward, right, up);
+
+	auto* weapon_data = weapon->get_weapon_data();
+	const float range = weapon_data && weapon_data->m_range() > 1.f ? weapon_data->m_range() : 8192.f;
+	const int need = static_cast<int>(std::ceil(static_cast<float>(required) / 100.f * static_cast<float>(samples)));
+
+	int hits = 0;
+	for (int seed = 0; seed < samples; ++seed) {
+		float sx = 0.f, sy = 0.f;
+		if (!game_spread(weapon, seed, inaccuracy, spread, sx, sy))
+			continue;
+		vec3_t direction = (forward + right * sx + up * sy).normalize();
+		if (ray_capsule(eye, direction, cap_a, cap_b, data.m_radius, range))
+			++hits;
+
+		const int remaining = samples - (seed + 1);
+		if (hits >= need && hits * 100 / samples >= required)
+			break;
+		if (hits + remaining < need)
+			break;
+	}
+	return std::clamp(static_cast<int>((static_cast<float>(hits) / static_cast<float>(samples)) * 100.f), 0, 100);
+}
+
+float c_rage_bot::required_hitchance(int configured, float inaccuracy, float spread, float distance, float radius,
+	int health, float damage, bool taser) const {
+	if (taser)
+		return 70.f;
+	if (configured >= 0)
+		return static_cast<float>(configured);
+
+	const float cone = inaccuracy + spread;
+	if (cone <= 0.00005f)
+		return 0.f;
+	const float cover = radius / (std::max)(distance, 1.f) / cone;
+	float required = clampf(cover * 85.f, 28.f, 78.f);
+	if (damage >= static_cast<float>(health))
+		required = (std::min)(required, 42.f);
+	return required;
+}
+
+// ============================================================================
+// TARGETING
+// ============================================================================
+
+lag_record_t* c_rage_bot::select_record(int handle) {
+	auto it = m_lag_records.find(handle);
+	if (it == m_lag_records.end() || it->second.empty())
+		return nullptr;
+
+	auto& cfg = weapon_config();
+	int depth = cfg.m_backtrack ? std::clamp(cfg.m_backtrack_ticks, 0, 64) : 1;
+	if (!cfg.m_backtrack)
+		depth = 1;
+	else if (depth == 0)
+		depth = static_cast<int>(it->second.size());
+
+	const auto* local = g_prediction->get_local_data();
+	if (!local)
+		return nullptr;
+
+	auto* weapon = g_ctx->m_local_pawn->get_active_weapon();
+	auto* data = weapon ? weapon->get_weapon_data() : nullptr;
+	if (!data)
+		return nullptr;
+	const bool taser = data->m_weapon_type() == WEAPONTYPE_TASER;
+	const bool allow_pen = cfg.m_penetration;
+
+	lag_record_t* best = nullptr;
+	float best_damage = -1.f;
+	int seen = 0;
+	const lag_record_t* previous = nullptr;
+
+	for (auto& record : it->second) {
+		if (!record.m_pawn || record.m_stored_bone_count <= 0 || !record.is_valid())
+			continue;
+		if (previous && std::isfinite(previous->m_simulation_time)) {
+			const float dt = previous->m_simulation_time - record.m_simulation_time;
+			vec3_t delta = previous->m_origin - record.m_origin;
+			if (dt > 0.001f && delta.length() > 4000.f * dt)
+				continue;
+		}
+		if (!best)
+			best = &record;
+		if (++seen > depth)
+			break;
+
+		record.apply(record.m_pawn);
+		float damage = 0.f;
+		for (int hitbox : { HITBOX_HEAD, HITBOX_CHEST, HITBOX_STOMACH }) {
+			hitbox_data_t box = get_hitbox_data(record.m_pawn, hitbox, &record);
+			if (box.m_invalid_data)
+				continue;
+			vec3_t center = (box.m_mins + box.m_maxs) * 0.5f;
+			vec3_t world{};
+			g_math->vector_transform(center, box.m_matrix, world);
+			penetration_data_t pen{};
+			if (!g_auto_wall->fire_bullet(local->m_eye_pos, world, record.m_pawn, data, pen, taser))
+				continue;
+			if (!allow_pen && pen.m_penetrated)
+				continue;
+			damage = (std::max)(damage, pen.m_damage);
+		}
+		record.reset(record.m_pawn);
+
+		if (damage > best_damage) {
+			best_damage = damage;
+			best = &record;
+		}
+		if (record.m_pawn && damage >= static_cast<float>(record.m_pawn->m_health()))
+			break;
+		previous = &record;
+	}
+	return best;
+}
+
+void c_rage_bot::find_targets() {
+	m_aim_targets.clear();
+	if (!g_ctx->m_local_pawn || !g_ctx->m_local_pawn->is_alive())
 		return;
 
-	if (m_aim_targets.empty())
+	for (auto entity : g_entity_system->get("CCSPlayerController")) {
+		auto* controller = reinterpret_cast<c_cs_player_controller*>(entity);
+		if (!controller || controller == g_ctx->m_local_controller)
+			continue;
+		const int handle = controller->get_handle().to_int();
+		lag_record_t* record = select_record(handle);
+		if (!record)
+			continue;
+		m_aim_targets.insert_or_assign(handle, aim_target_t(record));
+	}
+}
+
+bool c_rage_bot::build_prediction(int handle, lag_record_t& out) const {
+	auto it = m_lag_records.find(handle);
+	if (it == m_lag_records.end() || it->second.empty())
+		return false;
+
+	const int max_ticks = std::clamp(weapon_config().m_extrapolate, 0, 16);
+	const auto& newest = it->second.front();
+	const motion_model_t model = analyze_motion(it->second, max_ticks);
+	const int ticks = ticks_worth_predicting(newest, model, max_ticks);
+	if (ticks <= 0)
+		return false;
+
+	const auto* local = g_prediction->get_local_data();
+	auto* weapon = g_ctx->m_local_pawn ? g_ctx->m_local_pawn->get_active_weapon() : nullptr;
+	auto* data = weapon ? weapon->get_weapon_data() : nullptr;
+	if (!local || !data)
+		return false;
+	const bool taser = data->m_weapon_type() == WEAPONTYPE_TASER;
+	const bool allow_pen = weapon_config().m_penetration;
+
+	auto score = [&](lag_record_t& record) {
+		if (!record.m_pawn)
+			return -1.f;
+		record.apply(record.m_pawn);
+		float best = -1.f;
+		for (int hitbox : { HITBOX_HEAD, HITBOX_CHEST, HITBOX_STOMACH }) {
+			hitbox_data_t box = get_hitbox_data(record.m_pawn, hitbox, &record);
+			if (box.m_invalid_data)
+				continue;
+			vec3_t center = (box.m_mins + box.m_maxs) * 0.5f;
+			vec3_t world{};
+			g_math->vector_transform(center, box.m_matrix, world);
+			penetration_data_t pen{};
+			if (!g_auto_wall->fire_bullet(local->m_eye_pos, world, record.m_pawn, data, pen, taser))
+				continue;
+			if (!allow_pen && pen.m_penetrated)
+				continue;
+			best = (std::max)(best, pen.m_damage);
+		}
+		record.reset(record.m_pawn);
+		return best;
+	};
+
+	lag_record_t baseline = newest;
+	const float base_damage = score(baseline);
+	float best_weighted = base_damage;
+	bool found = false;
+
+	motion_step_t step{};
+	step.origin = newest.m_origin;
+	step.velocity = newest.m_velocity;
+	step.flags = newest.m_flags;
+	step.mins = newest.m_mins;
+	step.maxs = newest.m_maxs;
+	if (step.maxs.z - step.mins.z < 8.f) {
+		step.mins = { -16.f, -16.f, 0.f };
+		step.maxs = { 16.f, 16.f, 72.f };
+	}
+	step.direction = model.direction;
+
+	for (int tick = 1; tick <= ticks; ++tick) {
+		step.direction += model.yaw_per_tick;
+		float speed = step.velocity.length_2d() + model.speed_per_tick;
+		if (speed < 0.f)
+			speed = 0.f;
+		const float rad = deg2rad(step.direction);
+		step.velocity.x = std::cos(rad) * speed;
+		step.velocity.y = std::sin(rad) * speed;
+		step_movement(step, newest.m_pawn);
+
+		lag_record_t candidate = newest;
+		candidate.shift(step.origin - newest.m_origin);
+		candidate.m_velocity = step.velocity;
+		candidate.m_flags = step.flags;
+		candidate.m_extrapolated = true;
+		candidate.m_extrapolate_ticks = tick;
+		candidate.m_confidence = model.confidence;
+
+		const float damage = score(candidate);
+		const float weighted = damage * (1.f - static_cast<float>(tick) * 0.035f) * model.confidence;
+		if (damage >= 0.f && weighted > best_weighted) {
+			best_weighted = weighted;
+			out = candidate;
+			found = true;
+		}
+	}
+
+	// Current networked position is already good enough — don't lead a shot we can hit now.
+	if (found && base_damage >= 0.f && base_damage >= best_weighted / (std::max)(model.confidence, 0.2f) * 0.92f)
+		return false;
+	return found;
+}
+
+void c_rage_bot::select_target(float inaccuracy, float spread) {
+	m_best_target = nullptr;
+	if (m_aim_targets.empty() || !g_ctx->m_local_pawn)
 		return;
 
 	auto* weapon = g_ctx->m_local_pawn->get_active_weapon();
 	auto* weapon_data = weapon ? weapon->get_weapon_data() : nullptr;
-	if (!weapon_data)
+	const auto* local = g_prediction->get_local_data();
+	if (!weapon_data || !local)
 		return;
 
-	const bool is_taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
+	auto& cfg = weapon_config();
+	const bool taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
 	const bool override_damage = g_key_handler->is_pressed(
 		g_cfg->rage_bot.m_override_damage_key_bind, g_cfg->rage_bot.m_override_damage_key_bind_style);
-	const auto* local_data = g_prediction->get_local_data();
-	if (!local_data)
-		return;
 
-	auto& weapon_cfg = get_current_weapon_config();
-	auto& rage_cfg = g_cfg->rage_bot;
-
-	float cos_fov = -1.f;
-	if (rage_cfg.m_fov > 0 && rage_cfg.m_fov < 180) {
-		vec3_t view_dir{};
-		auto view_angles_pb = g_ctx->m_user_cmd->pb.base().viewangles();
-		vec3_t view_angles = { view_angles_pb.x(), view_angles_pb.y(), view_angles_pb.z() };
-		g_math->angle_vectors(view_angles, view_dir);
-		m_fov_dir = view_dir.normalize();
-		cos_fov = std::cos(deg2rad(static_cast<float>(rage_cfg.m_fov)));
+	float cos_fov = -2.f;
+	vec3_t view_dir{};
+	if (g_cfg->rage_bot.m_fov > 0 && g_cfg->rage_bot.m_fov < 180 && g_ctx->m_user_cmd) {
+		auto view = g_ctx->m_user_cmd->pb.base().viewangles();
+		vec3_t angles{ view.x(), view.y(), view.z() };
+		g_math->angle_vectors(angles, view_dir);
+		view_dir = view_dir.normalize();
+		cos_fov = std::cos(deg2rad(static_cast<float>(g_cfg->rage_bot.m_fov)));
 	}
 
-	const int extrapolate_ticks = std::clamp(weapon_cfg.m_extrapolate, 0, 16);
+	float best_damage = -1.f;
+	float best_distance = FLT_MAX;
 
-	float highest_damage = -1.f;
-	float closest_distance = FLT_MAX;
-	aim_point_t chosen_point{ vec3_t{}, -1 };
-
-	for (auto& [handle, target] : m_aim_targets)
-	{
-		auto* record = target.m_lag_record;
-		auto* pawn = target.m_pawn;
-		if (!record || !pawn || !pawn->is_alive() || !pawn->m_scene_node())
+	for (auto& [handle, target] : m_aim_targets) {
+		if (!target.m_lag_record || !target.m_pawn || !target.m_pawn->is_alive())
 			continue;
 
-		const int health = pawn->m_health();
-		int min_damage_value = weapon_cfg.m_minimum_damage == -1 ? health : weapon_cfg.m_minimum_damage;
-		int min_damage = (std::min)(override_damage ? min_damage_value : min_damage_value, health);
-		if (is_taser)
-			min_damage = health;
+		const int health = target.m_pawn->m_health();
+		int minimum = cfg.m_minimum_damage < 0 ? health : cfg.m_minimum_damage;
+		if (override_damage)
+			minimum = 1;
+		minimum = (std::min)(minimum, health);
+		if (taser)
+			minimum = health;
 
-		m_active_record = *record;
-		if (extrapolate_ticks > 0 && m_active_record.m_vec_velocity.length_2d() > 5.f)
-			m_active_record.extrapolate(extrapolate_ticks);
+		lag_record_t predicted{};
+		const bool have_prediction = build_prediction(handle, predicted);
+		lag_record_t candidate = have_prediction ? predicted : *target.m_lag_record;
 
-		m_active_record.apply(pawn);
+		const int side = resolver_side(handle, target.m_pawn, &candidate);
 		float damage = 0.f;
-		aim_point_t point = select_points(&m_active_record, damage);
-		m_active_record.reset(pawn);
-
-		if (point.m_hitbox == -1 || damage < static_cast<float>(min_damage))
+		aim_point_t point = select_points(&candidate, damage, inaccuracy, spread, side);
+		if (point.m_hitbox < 0 || damage < static_cast<float>(minimum))
 			continue;
 
-		if (cos_fov > -1.f)
-		{
-			vec3_t eye_pos = local_data->m_eye_pos;
-			vec3_t to_point = point.m_point - eye_pos;
-			float len = to_point.length();
-			if (len > 1.f)
-			{
-				to_point = to_point / len;
-				if (to_point.dot(m_fov_dir) < cos_fov)
-					continue;
-			}
+		if (cos_fov > -1.5f) {
+			vec3_t to = point.m_point - local->m_eye_pos;
+			const float len = to.length();
+			if (len > 1.f && (to / len).dot(view_dir) < cos_fov)
+				continue;
 		}
 
-		float distance = point.m_point.dist(local_data->m_eye_pos);
-		if (damage > highest_damage || (damage == highest_damage && distance < closest_distance))
-		{
-			highest_damage = damage;
-			closest_distance = distance;
-			chosen_point = point;
+		const float distance = point.m_point.dist(local->m_eye_pos);
+		if (damage > best_damage || (damage == best_damage && distance < best_distance)) {
+			best_damage = damage;
+			best_distance = distance;
+			m_active_record = candidate;
+			m_active_handle = handle;
+			m_active_side = side;
 			m_best_target = &target;
+			m_best_target->m_best_point = std::make_unique<aim_point_t>(point);
 		}
 	}
-
-	if (m_best_target)
-		m_best_target->m_best_point = std::make_unique<aim_point_t>(chosen_point);
 }
 
 // ============================================================================
-// ГЕОМЕТРИЯ ДЛЯ ХИТШАНСА
+// RESOLVER
 // ============================================================================
 
-bool c_rage_bot::ray_intersects_capsule(const vec3_t& start, const vec3_t& dir_normalized,
-	const vec3_t& cap_a, const vec3_t& cap_b, float radius, float max_dist)
-{
-	vec3_t ca = cap_a;
-	vec3_t cb = cap_b;
-	vec3_t st = start;
-	vec3_t dn = dir_normalized;
-	
-	vec3_t d1 = cb - ca;
-	vec3_t r = ca - st;
-	vec3_t d2 = dn;
-
-	float a_val = d1.dot(d1);
-	float e_val = d2.dot(d2);
-	float b_val = d1.dot(d2);
-	float c_val = d1.dot(r);
-	float f_val = d2.dot(r);
-
-	float denom = a_val * e_val - b_val * b_val;
-
-	float s = 0.f;
-	float t = 0.f;
-
-	if (a_val < 1e-6f || denom < 1e-6f)
-	{
-		t = e_val > 1e-6f ? f_val / e_val : 0.f;
-	}
-	else
-	{
-		t = (f_val * a_val - c_val * b_val) / denom;
-		s = a_val > 1e-6f ? (t * b_val - c_val) / a_val : 0.f;
-		s = std::clamp(s, 0.f, 1.f);
-	}
-
-	t = std::clamp(t, 0.f, max_dist);
-
-	if (a_val > 1e-6f)
-		s = std::clamp((t * b_val - c_val) / a_val, 0.f, 1.f);
-
-	vec3_t closest_ray = st + d2 * t;
-	vec3_t closest_cap = ca + d1 * s;
-
-	return closest_ray.dist(closest_cap) <= radius;
-}
-
-bool c_rage_bot::ray_hits_hitboxes(const vec3_t& start, const vec3_t& dir_normalized, lag_record_t* record, float max_dist)
-{
-	if (!record || !record->m_pawn || record->m_stored_bone_count <= 0)
-		return false;
-
-	c_cs_player_pawn* pawn = record->m_pawn;
-
-	for (const int hitbox : m_hitboxes)
-	{
-		hitbox_data_t data = get_hitbox_data(pawn, hitbox, record);
-		if (data.m_invalid_data)
-			continue;
-
-		vec3_t cap_a{}, cap_b{};
-		g_math->vector_transform(data.m_mins, data.m_matrix, cap_a);
-		g_math->vector_transform(data.m_maxs, data.m_matrix, cap_b);
-
-		if (hitbox == HITBOX_HEAD)
-		{
-			vec3_t center = (cap_a + cap_b) * 0.5f;
-			if (ray_intersects_capsule(start, dir_normalized, center, center, data.m_radius, max_dist))
-				return true;
-		}
-		else
-		{
-			if (ray_intersects_capsule(start, dir_normalized, cap_a, cap_b, data.m_radius, max_dist))
-				return true;
-		}
-	}
-
-	return false;
-}
-
-// ============================================================================
-// ХИТШАНС - ПРАВИЛЬНЫЙ МЕТОД ИЗ UNKNOWNCHEATS
-// ============================================================================
-// Метод основан на trace-based hitchance: генерируем N лучей с spread/inaccuracy,
-// трассируем каждый, считаем процент попаданий по хитбоксам.
-// ============================================================================
-
-bool c_rage_bot::weapon_is_at_max_accuracy(c_cs_weapon_base_v_data* weapon_data, float inaccuracy)
-{
-	auto* local_data = g_prediction->get_local_data();
-
-	if (!local_data)
-		return false;
-
-	constexpr auto round_accuracy = [](float accuracy) { return floorf(accuracy * 170.f) / 170.f; };
-	constexpr auto round_duck_accuracy = [](float accuracy) { return floorf(accuracy * 300.f) / 300.f; };
-
-	float speed = g_ctx->m_local_pawn->m_vec_abs_velocity().length_2d();
-	
-	// Проверяем флаги более точно
-	bool is_on_ground = (g_ctx->m_local_pawn->m_flags() & FL_ONGROUND) != 0;
-	bool is_in_air = !is_on_ground;
-
-	bool is_scoped = ((weapon_data->m_weapon_type() == WEAPONTYPE_SNIPER_RIFLE)
-		&& g_ctx->m_local_pawn->m_scoped());
-
-	bool is_ducking = ((g_ctx->m_local_pawn->m_flags() & FL_DUCKING) || 
-	                   (g_ctx->m_user_cmd->m_button_state.m_button_state & IN_DUCK));
-
-	// В воздухе никогда не максимальная точность
-	if (is_in_air)
-		return false;
-
-	float rounded_accuracy = round_accuracy(inaccuracy);
-	float rounded_duck_accuracy = round_duck_accuracy(inaccuracy);
-
-	// Присев, стоя, заскоуплено
-	if (is_ducking && is_scoped && is_on_ground && (rounded_duck_accuracy < local_data->m_inaccuracy))
-		return true;
-
-	// Стоя, не движемся, заскоуплено
-	if (speed <= 0.1f && is_scoped && is_on_ground && (rounded_accuracy < local_data->m_inaccuracy))
-		return true;
-
-	return false;
-}
-
-// Генерирует направление луча с учетом spread и inaccuracy
-// Использует правильный CS2 метод генерации spread
-vec3_t c_rage_bot::calculate_spread_direction(vec3_t forward, vec3_t right, vec3_t up, float inaccuracy, float spread, int seed)
-{
-	// Используем seed для детерминированного рандома
-	g_interfaces->m_random_seed(seed);
-	
-	// Генерируем spread компоненты по методу CS2
-	// Два круга: inaccuracy (внутренний) и spread (внешний)
-	float r1 = g_interfaces->m_random_float(0.f, 1.f);
-	float r2 = g_interfaces->m_random_float(0.f, _pi2);
-	float r3 = g_interfaces->m_random_float(0.f, 1.f);
-	float r4 = g_interfaces->m_random_float(0.f, _pi2);
-
-	// Inaccuracy - зависит от движения, stance, и т.д.
-	float inac_x = std::cos(r2) * (r1 * inaccuracy);
-	float inac_y = std::sin(r2) * (r1 * inaccuracy);
-	
-	// Spread - базовый spread оружия
-	float spread_x = std::cos(r4) * (r3 * spread);
-	float spread_y = std::sin(r4) * (r3 * spread);
-	
-	// Комбинируем
-	float total_x = inac_x + spread_x;
-	float total_y = inac_y + spread_y;
-	
-	// Применяем к направлению
-	vec3_t direction = forward + (right * total_x) + (up * total_y);
-	return direction.normalize();
-}
-
-// НОВЫЙ ПРАВИЛЬНЫЙ МЕТОД ХИТШАНСА
-// Не чекает через скорость, а трассирует реальные spread rays
-int c_rage_bot::calculate_hit_chance(c_cs_player_pawn* pawn, vec3_t angles, c_base_player_weapon* active_weapon, c_cs_weapon_base_v_data* weapon_data, bool no_spread)
-{
-	if (!g_ctx->m_local_pawn->is_alive())
+int c_rage_bot::resolver_side(int handle, c_cs_player_pawn* pawn, const lag_record_t* record) {
+	if (!g_cfg->rage_bot.m_resolver_enabled || !pawn || !record)
 		return 0;
 
-	if (!pawn || !m_best_target || !m_best_target->m_best_point)
-		return 0;
+	auto& state = m_resolver[handle];
+	const bool override_on = g_cfg->rage_bot.m_resolver_override && (g_cfg->rage_bot.m_resolver_override_key <= 0
+		|| g_key_handler->is_pressed(g_cfg->rage_bot.m_resolver_override_key, g_cfg->rage_bot.m_resolver_override_key_style));
+	if (override_on)
+		return state.m_side;
 
-	auto* local_data = g_prediction->get_local_data();
-	if (!local_data)
-		return 0;
+	vec3_t velocity = record->m_velocity;
+	const float speed = velocity.length_2d();
+	float eye_yaw = record->m_eye_angles.y;
+	if (!std::isfinite(eye_yaw))
+		return state.m_misses > 0 ? state.m_side : 0;
 
-	// No spread = всегда 100%
-	if (no_spread)
-		return 100;
-
-	vec3_t shoot_pos = local_data->m_eye_pos;
-
-	// Проверка дистанции
-	if (shoot_pos.dist(m_best_target->m_best_point->m_point) > weapon_data->m_range())
-		return 0;
-
-	// Получаем реальный spread и inaccuracy ИЗ ОРУЖИЯ
-	// НЕ ЧЕРЕЗ СКОРОСТЬ, А НАПРЯМУЮ
-	float weapon_spread = active_weapon->get_spread();
-	float weapon_inaccuracy = active_weapon->get_inaccuracy();
-
-	// Если spread и inaccuracy практически ноль - идеальная точность
-	if (weapon_spread + weapon_inaccuracy <= 0.0001f)
-		return 100;
-
-	// Если на максимальной точности (стоим заскопленный и т.д.)
-	if (weapon_is_at_max_accuracy(weapon_data, weapon_inaccuracy))
-		return 100;
-
-	// Количество лучей для трассировки
-	auto& weapon_cfg = get_current_weapon_config();
-	int seed_count = std::clamp(weapon_cfg.m_hit_chance_seed, 32, 256);
-	if (seed_count == 0)
-		seed_count = 128;
-
-	// Получаем направляющие векторы
-	vec3_t forward, right, up;
-	g_math->angle_vectors(angles, forward, right, up);
-
-	// Считаем попадания
-	int hits = 0;
-	const float max_range = weapon_data->m_range();
-	
-	for (int i = 0; i < seed_count; ++i)
-	{
-		// Генерируем направление с spread
-		vec3_t spread_direction = calculate_spread_direction(
-			forward, right, up, 
-			weapon_inaccuracy, 
-			weapon_spread, 
-			i
-		);
-
-		// Проверяем попадет ли этот луч по хитбоксам
-		if (ray_hits_hitboxes(shoot_pos, spread_direction, &m_active_record, max_range))
-		{
-			hits++;
-		}
+	if (state.m_has_eye) {
+		const float jitter = std::fabs(g_math->angle_diff(state.m_last_eye_yaw, eye_yaw));
+		if (jitter > 20.f && jitter < 160.f && speed < 30.f)
+			return state.m_side;
 	}
+	state.m_last_eye_yaw = eye_yaw;
+	state.m_has_eye = true;
 
-	// Процент попаданий = hitchance
-	int hitchance = static_cast<int>((static_cast<float>(hits) / static_cast<float>(seed_count)) * 100.f);
-	return std::clamp(hitchance, 0, 100);
+	if (speed > 40.f) {
+		const float move_yaw = rad2deg(std::atan2(velocity.y, velocity.x));
+		const float delta = g_math->angle_diff(move_yaw, eye_yaw);
+		if (std::fabs(delta) > 28.f)
+			state.m_side = delta > 0.f ? 1 : -1;
+		else if (state.m_misses == 0)
+			return 0;
+	}
+	return state.m_misses > 0 || speed > 40.f ? state.m_side : 0;
 }
 
-// ============================================================================
-// БЕКТРЕК (интерполяция входов)
-// ============================================================================
+void c_rage_bot::note_shot(int handle, c_cs_player_pawn* pawn, int side) {
+	m_last_shot.m_handle = handle;
+	m_last_shot.m_health = pawn ? pawn->m_health() : 0;
+	m_last_shot.m_tick = g_ctx->m_local_controller ? g_ctx->m_local_controller->m_tick_base() : 0;
+	m_last_shot.m_side = side == 0 ? 1 : side;
+	m_last_shot.m_pending = true;
+	m_resolver[handle].m_side = m_last_shot.m_side;
+	m_resolver[handle].m_last_shot_tick = m_last_shot.m_tick;
+	m_resolver[handle].m_health_at_shot = m_last_shot.m_health;
+}
 
-void c_rage_bot::process_backtrack(lag_record_t* record)
-{
-	if (!record)
+void c_rage_bot::resolve_misses() {
+	if (!m_last_shot.m_pending || !g_ctx->m_local_controller)
+		return;
+	const int tick = g_ctx->m_local_controller->m_tick_base();
+	if (tick - m_last_shot.m_tick < 6)
 		return;
 
-	auto& weapon_cfg = get_current_weapon_config();
-	if (!weapon_cfg.m_backtrack)
+	auto it = m_lag_records.find(m_last_shot.m_handle);
+	const int health = (it != m_lag_records.end() && !it->second.empty() && it->second.front().m_pawn)
+		? it->second.front().m_pawn->m_health() : -1;
+	auto& state = m_resolver[m_last_shot.m_handle];
+	if (health >= 0 && health < m_last_shot.m_health) {
+		state.m_misses = 0;
+	} else {
+		state.m_side = -m_last_shot.m_side;
+		++state.m_misses;
+	}
+	m_last_shot.m_pending = false;
+}
+
+// ============================================================================
+// SHOOT / STOP / PEEK
+// ============================================================================
+
+void c_rage_bot::process_backtrack(const lag_record_t* record) {
+	if (!record || record->m_extrapolated || !weapon_config().m_backtrack || !g_ctx->m_user_cmd)
 		return;
-
-	const int tick_shoot = TIME_TO_TICKS(record->m_simulation_time) + 2;
-
-	for (int i = 0; i < g_ctx->m_user_cmd->pb.input_history_size(); i++) {
-
-		if (g_ctx->m_user_cmd->pb.attack1_start_history_index() == -1)
+	const int tick = TIME_TO_TICKS(record->m_simulation_time) + 2;
+	auto* cmd = g_ctx->m_user_cmd;
+	for (int i = 0; i < cmd->pb.input_history_size(); ++i) {
+		auto* entry = cmd->pb.mutable_input_history(i);
+		if (!entry)
 			continue;
+		if (entry->has_cl_interp())
+			entry->mutable_cl_interp()->set_frac(0.f);
+		if (entry->has_sv_interp0()) {
+			auto* interp = entry->mutable_sv_interp0();
+			interp->set_src_tick(tick);
+			interp->set_dst_tick(tick);
+			interp->set_frac(0.f);
+		}
+		if (entry->has_sv_interp1()) {
+			auto* interp = entry->mutable_sv_interp1();
+			interp->set_src_tick(tick);
+			interp->set_dst_tick(tick);
+			interp->set_frac(0.f);
+		}
+		entry->set_render_tick_count(tick);
+		entry->set_player_tick_count(g_ctx->m_local_controller->m_tick_base());
+		if (auto* local = g_prediction->get_local_data())
+			entry->set_player_tick_fraction(local->m_player_tick_fraction);
+	}
+	cmd->pb.mutable_base()->set_client_tick(tick);
+}
 
-		auto input_history = g_ctx->m_user_cmd->pb.mutable_input_history(i);
-		if (!input_history)
+bool c_rage_bot::can_shoot(c_base_player_weapon* weapon) const {
+	if (!weapon || !g_ctx->m_local_controller || weapon->m_in_reload() || weapon->m_clip1() <= 0)
+		return false;
+	const int tick = g_ctx->m_local_controller->m_tick_base();
+	if (m_last_fire_tick == tick)
+		return false;
+	return weapon->m_next_primary_attack() <= tick;
+}
+
+void c_rage_bot::process_attack(c_user_cmd* cmd, const vec3_t& angle, bool backtrack) {
+	cmd->pb.mutable_base()->mutable_viewangles()->set_x(angle.x);
+	cmd->pb.mutable_base()->mutable_viewangles()->set_y(angle.y);
+	cmd->pb.mutable_base()->mutable_viewangles()->set_z(angle.z);
+
+	const int shoot_tick = g_prediction->get_local_data() ? g_prediction->get_local_data()->m_shoot_tick
+		: g_ctx->m_local_controller->m_tick_base();
+	for (int i = 0; i < cmd->pb.input_history_size(); ++i) {
+		auto* entry = cmd->pb.mutable_input_history(i);
+		if (!entry)
 			continue;
-
-		if (input_history->has_cl_interp()) {
-			auto interp_info = input_history->mutable_cl_interp();
-			interp_info->set_frac(0.f);
-		}
-
-		if (input_history->has_sv_interp0()) {
-			auto interp_info = input_history->mutable_sv_interp0();
-			interp_info->set_src_tick(tick_shoot);
-			interp_info->set_dst_tick(tick_shoot);
-			interp_info->set_frac(0.f);
-		}
-
-		if (input_history->has_sv_interp1()) {
-			auto interp_info = input_history->mutable_sv_interp1();
-			interp_info->set_src_tick(tick_shoot);
-			interp_info->set_dst_tick(tick_shoot);
-			interp_info->set_frac(0.f);
-		}
-
-		input_history->set_render_tick_count(tick_shoot);
-
-		g_ctx->m_user_cmd->pb.mutable_base()->set_client_tick(tick_shoot);
-
-		input_history->set_player_tick_count(g_ctx->m_local_controller->m_tick_base());
-		input_history->set_player_tick_fraction(g_prediction->get_local_data()->m_player_tick_fraction);
+		entry->set_player_tick_count(shoot_tick);
+		entry->mutable_view_angles()->set_x(angle.x);
+		entry->mutable_view_angles()->set_y(angle.y);
+		entry->mutable_view_angles()->set_z(angle.z);
 	}
+	if (cmd->pb.input_history_size() > 0)
+		cmd->pb.set_attack1_start_history_index(0);
+	if (backtrack)
+		process_backtrack(&m_active_record);
+	cmd->m_button_state.m_button_state |= IN_ATTACK;
+	cmd->m_button_state.m_button_state2 |= IN_ATTACK;
+	m_last_fire_tick = g_ctx->m_local_controller->m_tick_base();
 }
 
-// ============================================================================
-// ВЫСТРЕЛ
-// ============================================================================
-
-bool c_rage_bot::can_shoot(c_cs_player_pawn* pawn, c_base_player_weapon* active_weapon)
-{
-	return (active_weapon->m_clip1() > 0) && (active_weapon->m_next_primary_attack() <= g_ctx->m_local_controller->m_tick_base() + 2);
-}
-
-void c_rage_bot::process_attack(c_user_cmd* user_cmd, vec3_t angle)
-{
-	user_cmd->pb.mutable_base()->mutable_viewangles()->set_x(angle.x);
-	user_cmd->pb.mutable_base()->mutable_viewangles()->set_y(angle.y);
-	user_cmd->pb.mutable_base()->mutable_viewangles()->set_z(angle.z);
-
-	for (int i = 0; i < g_ctx->m_user_cmd->pb.input_history_size(); i++)
-	{
-		auto container = g_ctx->m_user_cmd->pb.mutable_input_history(i);
-		if (container)
-			container->set_player_tick_count(g_prediction->get_local_data()->m_shoot_tick);
-	}
-
-	if (user_cmd->pb.input_history_size() > 0)
-		user_cmd->pb.set_attack1_start_history_index(0);
-	process_backtrack(&m_active_record);
-
-	user_cmd->m_button_state.m_button_state |= IN_ATTACK;
-}
-
-// ============================================================================
-// DOUBLE TAP / HIDE SHOTS (CS2 subtick)
-// ============================================================================
-
-void c_rage_bot::strip_attack(c_user_cmd* user_cmd)
-{
-	auto& buttons = user_cmd->m_button_state;
-	buttons.m_button_state &= ~IN_ATTACK;
-	buttons.m_button_state2 &= ~IN_ATTACK;
-	buttons.m_button_state3 &= ~IN_ATTACK;
-
-	if (!user_cmd->pb.has_base())
-		return;
-
-	auto* base = user_cmd->pb.mutable_base();
-	for (int i = 0; i < base->subtick_moves_size(); ++i) {
-		auto* step = base->mutable_subtick_moves(i);
-		if (step && (step->button() & IN_ATTACK)) {
-			step->set_button(step->button() & ~IN_ATTACK);
-			if (!step->button())
-				step->clear_pressed();
-		}
-	}
-}
-
-void c_rage_bot::process_exploit_attack(c_user_cmd* user_cmd, vec3_t angle, bool dt_active, bool hs_active, bool want_shoot)
-{
+void c_rage_bot::process_exploit(c_user_cmd* cmd, const vec3_t& angle, bool dt, bool hide) {
 	auto* weapon = g_ctx->m_local_pawn ? g_ctx->m_local_pawn->get_active_weapon() : nullptr;
-	if (!weapon || !user_cmd->pb.has_base())
+	if (!weapon || !cmd->pb.has_base())
 		return;
 
-	const int tick_base = g_ctx->m_local_controller->m_tick_base();
-	const int next_attack_tick = weapon->m_next_primary_attack();
-	const bool ready = (next_attack_tick <= tick_base) && (weapon->m_clip1() > 0);
-
-	bool should_attack = want_shoot && ready;
-	if (dt_active)
-		should_attack = should_attack && !m_dt_fired;
-
-	for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
-		auto* entry = user_cmd->pb.mutable_input_history(i);
-		if (entry)
-			entry->set_player_tick_count(should_attack ? next_attack_tick : 0);
+	for (int i = 0; i < cmd->pb.input_history_size(); ++i) {
+		auto* entry = cmd->pb.mutable_input_history(i);
+		if (!entry)
+			continue;
+		entry->mutable_view_angles()->set_x(angle.x);
+		entry->mutable_view_angles()->set_y(angle.y);
+		entry->mutable_view_angles()->set_z(angle.z);
+		const int shoot_tick = g_prediction->get_local_data()
+			? g_prediction->get_local_data()->m_shoot_tick
+			: g_ctx->m_local_controller->m_tick_base();
+		entry->set_player_tick_count(dt ? weapon->m_next_primary_attack() : shoot_tick);
 	}
 
-	if (should_attack) {
-		auto* base = user_cmd->pb.mutable_base();
-		if (base->subtick_moves_size() < 64) {
-			auto allocate = [&]() { return g_protobuf->add_subtick_move_step(user_cmd); };
-
-			const auto make_step = [&](bool pressed, float when) -> CSubtickMoveStep* {
-				auto* step = allocate();
-				if (!step)
-					return nullptr;
-				step->set_button(IN_ATTACK);
-				step->set_pressed(pressed);
-				step->set_when(when);
-				step->clear_analog_forward_delta();
-				step->clear_analog_left_delta();
-				step->clear_pitch_delta();
-				step->clear_yaw_delta();
-				return step;
-			};
-
-			make_step(true, 0.0f);
-			make_step(false, 0.999f);
+	const bool ready = can_shoot(weapon);
+	const bool shoot = ready && (!dt || !m_dt_fired);
+	if (shoot) {
+		cmd->m_button_state.m_button_state |= IN_ATTACK;
+		cmd->m_button_state.m_button_state2 |= IN_ATTACK;
+		if (cmd->pb.input_history_size() > 0)
+			cmd->pb.set_attack1_start_history_index(0);
+		if (!m_active_record.m_extrapolated)
+			process_backtrack(&m_active_record);
+		m_last_fire_tick = g_ctx->m_local_controller->m_tick_base();
+	}
+	if (shoot && cmd->pb.mutable_base()->subtick_moves_size() < 12) {
+		auto* press = g_protobuf->add_subtick_move_step(cmd);
+		auto* release = g_protobuf->add_subtick_move_step(cmd);
+		const float when = hide ? 0.99f : 0.f;
+		if (press) {
+			press->set_button(IN_ATTACK);
+			press->set_pressed(true);
+			press->set_when(when);
+			press->clear_analog_forward_delta();
+			press->clear_analog_left_delta();
+			press->clear_pitch_delta();
+			press->clear_yaw_delta();
 		}
+		if (release) {
+			release->set_button(IN_ATTACK);
+			release->set_pressed(false);
+			release->set_when(0.999f);
+			release->clear_analog_forward_delta();
+			release->clear_analog_left_delta();
+			release->clear_pitch_delta();
+			release->clear_yaw_delta();
+		}
+	} else if (!shoot) {
+		cmd->m_button_state.m_button_state &= ~IN_ATTACK;
+		cmd->m_button_state.m_button_state2 &= ~IN_ATTACK;
+		cmd->m_button_state.m_button_state3 &= ~IN_ATTACK;
 	}
-	else {
-		strip_attack(user_cmd);
+	m_dt_fired = dt && shoot && !m_dt_fired;
+	if (!shoot)
+		cmd->pb.set_attack1_start_history_index(-1);
+	cmd->pb.mutable_base()->mutable_viewangles()->set_x(angle.x);
+	cmd->pb.mutable_base()->mutable_viewangles()->set_y(angle.y);
+	cmd->pb.mutable_base()->mutable_viewangles()->set_z(angle.z);
+}
+
+void c_rage_bot::apply_autostop(c_user_cmd* cmd, c_cs_player_pawn* local, c_base_player_weapon* weapon,
+	bool no_spread, bool early, bool full, bool between, bool air) {
+	auto_stop_options_t options{};
+	options.m_enabled = true;
+	options.m_early = early && !full;
+	options.m_full = full || between;
+	options.m_between = between;
+	options.m_air = air;
+	options.m_duck = false;
+	options.m_no_spread = no_spread;
+	g_movement->auto_stop(cmd, local, weapon, options);
+}
+
+void c_rage_bot::update_peek(c_user_cmd* cmd, c_cs_player_pawn* local, bool fired, bool have_target) {
+	auto& cfg = g_cfg->rage_bot;
+	if (!cfg.m_peek_assist || !local || !cmd || !cmd->pb.has_base()) {
+		m_peek = {};
+		std::lock_guard lock(m_peek_mutex);
+		m_peek_draw = {};
+		return;
 	}
 
-	m_dt_fired = dt_active && should_attack && !m_dt_fired;
+	auto* scene = local->m_scene_node();
+	if (!scene)
+		return;
+	vec3_t origin = scene->m_abs_origin();
+	if (!m_peek.m_active) {
+		m_peek.m_active = true;
+		m_peek.m_anchor = origin;
+		m_peek.m_health_at_start = local->m_health();
+	}
 
-	user_cmd->pb.set_attack1_start_history_index(-1);
+	const float max_units = cfg.m_peek_assist_max_distance >= 100
+		? FLT_MAX : static_cast<float>(cfg.m_peek_assist_max_distance) * 39.37f;
+	vec3_t away = origin - m_peek.m_anchor;
+	const float distance = away.length_2d();
+
+	if (fired && cfg.m_peek_assist_retreat == 1)
+		m_peek.m_retreat_after_shot = true;
+	if (cfg.m_peek_assist_retreat == 2 && local->m_health() < m_peek.m_health_at_start)
+		m_peek.m_retreating = true;
+	if (m_peek.m_retreat_after_shot)
+		m_peek.m_retreating = true;
+	if (distance > max_units)
+		m_peek.m_retreating = true;
+	if (m_peek.m_retreating && distance < 10.f) {
+		m_peek.m_retreating = false;
+		m_peek.m_retreat_after_shot = false;
+		m_peek.m_anchor = origin;
+		m_peek.m_health_at_start = local->m_health();
+	}
+
+	if (m_peek.m_retreating && distance > 8.f) {
+		const float world_yaw = rad2deg(std::atan2(-away.y, -away.x));
+		const float rel = deg2rad(g_math->angle_diff(m_move_yaw, world_yaw));
+		cmd->pb.mutable_base()->set_forwardmove(std::cos(rel));
+		cmd->pb.mutable_base()->set_leftmove(std::sin(rel));
+	} else if (have_target && cfg.m_peek_assist_auto_stop != 0) {
+		auto* weapon = local->get_active_weapon();
+		if (weapon)
+			apply_autostop(cmd, local, weapon, false, cfg.m_peek_assist_auto_stop == 1, cfg.m_peek_assist_auto_stop == 2, false, false);
+	}
+
+	std::lock_guard lock(m_peek_mutex);
+	m_peek_draw.m_active = true;
+	m_peek_draw.m_retreating = m_peek.m_retreating;
+	m_peek_draw.m_anchor = m_peek.m_anchor;
+	m_peek_draw.m_player = origin;
+	m_peek_draw.m_max_distance = max_units;
+	m_peek_draw.m_style = cfg.m_peek_assist_style;
+}
+
+void c_rage_bot::on_present() {
+	peek_draw_t draw{};
+	{
+		std::lock_guard lock(m_peek_mutex);
+		draw = m_peek_draw;
+	}
+	if (!draw.m_active || !g_render || !g_render->m_background_draw_list)
+		return;
+
+	const float radius = draw.m_style == 2 && draw.m_max_distance < 100000.f
+		? (std::min)(draw.m_max_distance, 80.f) : 18.f;
+	vec3_t previous{};
+	bool have_previous = false;
+	for (int i = 0; i <= 24; ++i) {
+		const float ang = deg2rad(static_cast<float>(i) / 24.f * 360.f);
+		vec3_t world = draw.m_anchor;
+		world.x += std::cos(ang) * radius;
+		world.y += std::sin(ang) * radius;
+		vec3_t screen{};
+		if (!g_render->world_to_screen(world, screen)) {
+			have_previous = false;
+			continue;
+		}
+		if (have_previous) {
+			float alpha = 0.85f;
+			c_color color{ 0.45f, 0.75f, 1.f, alpha };
+			if (draw.m_style == 1) {
+				vec3_t delta = draw.m_player - draw.m_anchor;
+				const float dist = delta.length_2d();
+				const float t = draw.m_max_distance > 1.f && draw.m_max_distance < 100000.f
+					? clampf(dist / draw.m_max_distance, 0.f, 1.f) : clampf(dist / 400.f, 0.f, 1.f);
+				color = { t, 1.f - t, 0.35f, 0.9f };
+			} else if (draw.m_retreating) {
+				color = { 1.f, 0.45f, 0.2f, 0.9f };
+			}
+			g_render->line(previous, screen, color);
+		}
+		previous = screen;
+		have_previous = true;
+	}
 }
 
 // ============================================================================
-// ON CREATE MOVE
+// CREATE MOVE
 // ============================================================================
 
-void c_rage_bot::on_create_move()
-{
-	if (!g_cfg->rage_bot.m_enabled)
+void c_rage_bot::on_create_move() {
+	resolve_misses();
+	if (!g_cfg->rage_bot.m_enabled || !g_interfaces->m_engine->is_in_game())
 		return;
 
-	if (!g_interfaces->m_engine->is_in_game())
-		return;
-
-	if (!m_hitboxes.empty())
-		m_hitboxes.clear();
-
+	m_hitboxes.clear();
 	m_best_target = nullptr;
 
-	c_user_cmd* user_cmd = g_ctx->m_user_cmd;
-
-	if (!user_cmd)
+	c_user_cmd* cmd = g_ctx->m_user_cmd;
+	c_cs_player_pawn* local = g_ctx->m_local_pawn;
+	if (!cmd || !cmd->pb.has_base() || !local || !local->is_alive())
 		return;
 
-	c_cs_player_pawn* local_player = g_ctx->m_local_pawn;
+	m_move_yaw = cmd->pb.base().viewangles().y();
 
-	if (!local_player || !local_player->is_alive())
+	c_base_player_weapon* weapon = local->get_active_weapon();
+	c_cs_weapon_base_v_data* data = weapon ? weapon->get_weapon_data() : nullptr;
+	if (!weapon || !data)
 		return;
-
-	c_base_player_weapon* active_weapon = local_player->get_active_weapon();
-
-	if (!active_weapon)
+	const int weapon_type = data->m_weapon_type();
+	if (weapon_type == WEAPONTYPE_KNIFE || weapon_type == WEAPONTYPE_GRENADE
+		|| weapon_type == WEAPONTYPE_C4 || weapon_type == WEAPONTYPE_EQUIPMENT) {
+		update_peek(cmd, local, false, false);
 		return;
+	}
 
-	c_cs_weapon_base_v_data* weapon_data = active_weapon->get_weapon_data();
-
-	if (!weapon_data
-		|| weapon_data->m_weapon_type() == WEAPONTYPE_KNIFE
-		|| weapon_data->m_weapon_type() == WEAPONTYPE_GRENADE)
-		return;
+	if (!g_cfg->rage_bot.m_double_tap)
+		m_dt_fired = false;
 
 	store_hitboxes();
-
 	if (m_hitboxes.empty())
 		return;
 
-	find_targets();
-
-	select_target();
-
-	if (!m_best_target || !m_best_target->m_best_point)
-		return;
-
-	auto* local_data = g_prediction->get_local_data();
-
-	if (!local_data)
-		return;
-
-	// ИСПРАВЛЕНИЕ #9: Проверяем landing state - не стреляем если только что приземлились
-	auto landing = g_prediction->landing(local_player, user_cmd);
-	const bool just_landed = landing.valid && landing.grounded && landing.will_land && landing.fraction < 0.1f;
-	
-	// Если только что приземлились - ждем 1-2 тика для стабилизации inaccuracy
-	static int ticks_since_land = 10;
-	if (just_landed) {
-		ticks_since_land = 0;
-	} else if ((local_player->m_flags() & FL_ONGROUND) != 0) {
-		ticks_since_land++;
-	} else {
-		ticks_since_land = 0; // В воздухе
-	}
-	
-	// Не стреляем если недавно приземлились (inaccuracy еще высокая)
-	if (ticks_since_land < 2 && weapon_data->m_weapon_type() != WEAPONTYPE_TASER) {
-		return;
-	}
-
+	weapon->update_accuracy_penality();
+	const float spread = weapon->get_spread();
+	const float inaccuracy = weapon->get_inaccuracy();
 	const auto no_spread_var = g_interfaces->m_var->get_by_name(xorstr_("weapon_accuracy_nospread"));
-	bool no_spread = no_spread_var && no_spread_var->get_bool();
+	const bool no_spread = no_spread_var && no_spread_var->get_bool();
 
-	auto& weapon_cfg = get_current_weapon_config();
+	m_active_handle = -1;
+	m_active_side = 0;
+	find_targets();
+	select_target(no_spread ? 0.f : inaccuracy, no_spread ? 0.f : spread);
 
-	// Автоскоуп
-	if (weapon_cfg.m_auto_scope
-		&& (weapon_data->m_weapon_type() == WEAPONTYPE_SNIPER_RIFLE)
-		&& !(user_cmd->m_button_state.m_button_state & IN_ZOOM)
-		&& !local_player->m_scoped()
-		&& (local_player->m_flags() & FL_ONGROUND)
-		&& !no_spread) {
-		user_cmd->m_button_state.m_button_state |= IN_ATTACK2;
-	}
-
-	// ИСПРАВЛЕНИЕ #1: Проверяем can_shoot ДО автостопа
-	// Если не можем стрелять (перезарядка и т.д.) - не стопаем
-	const bool can_fire = can_shoot(local_player, active_weapon);
-	
-	const bool is_taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
-	
-	// Вычисляем угол заранее для хитшанса
-	m_active_record.apply(m_active_record.m_pawn);
-	vec3_t angle = g_math->aim_direction(local_data->m_eye_pos, m_best_target->m_best_point->m_point);
-	vec3_t punch = get_removed_aim_punch_angle(local_player);
-	vec3_t best_angle = angle - punch;
-
-	// ИСПРАВЛЕНИЕ #2: Автостоп с правильной логикой
-	{
-		const int weapon_type = weapon_data->m_weapon_type();
-		const bool is_automatic = weapon_type == WEAPONTYPE_SUBMACHINEGUN
-			|| weapon_type == WEAPONTYPE_RIFLE
-			|| weapon_type == WEAPONTYPE_MACHINEGUN;
-
-		const int tick_base = g_ctx->m_local_controller->m_tick_base();
-		const int next_attack = active_weapon->m_next_primary_attack();
-		
-		// Between работает только если:
-		// 1. Автоматическое оружие
-		// 2. Есть цель
-		// 3. Мы не можем стрелять прямо сейчас (кулдаун)
-		// 4. Но скоро сможем (в течение 3 тиков)
-		const bool between_window = is_automatic
-			&& weapon_cfg.m_auto_stop_between
-			&& !can_fire
-			&& (next_attack - tick_base) <= 3
-			&& (next_attack - tick_base) > 0;
-
-		// Early работает когда мы можем стрелять И хотим заранее остановиться
-		const bool should_early_stop = can_fire && weapon_cfg.m_auto_stop_early;
-		
-		// Full работает когда мы можем стрелять И нужен полный стоп
-		const bool should_full_stop = can_fire && weapon_cfg.m_auto_stop_full;
-
-		auto_stop_options_t stop_options{};
-		stop_options.m_enabled = weapon_cfg.m_auto_stop;
-		stop_options.m_early = should_early_stop && !should_full_stop; // Early только если не full
-		stop_options.m_full = should_full_stop;
-		stop_options.m_between = between_window;
-		stop_options.m_air = weapon_cfg.m_auto_stop_air;
-		stop_options.m_duck = false; // Duck будет управляться хитшансом ниже
-		stop_options.m_no_spread = no_spread;
-
-		g_movement->auto_stop(user_cmd, local_player, active_weapon, stop_options);
-	}
-
-	// Если не можем стрелять - выходим
-	if (!can_fire) {
-		m_active_record.reset(m_active_record.m_pawn);
-		return;
-	}
-
-	// ИСПРАВЛЕНИЕ #3: Хитшанс проверяется ПОСЛЕ автостопа
-	// Обновляем weapon accuracy после автостопа
-	active_weapon->update_accuracy_penality();
-	
-	const int hit_chance = calculate_hit_chance(m_best_target->m_pawn, best_angle, active_weapon, weapon_data, no_spread);
-
-	m_active_record.reset(m_active_record.m_pawn);
-
-	float required_hc = weapon_cfg.m_hit_chance < 0
-		? 0.f
-		: static_cast<float>(is_taser ? 70 : weapon_cfg.m_hit_chance);
-
-	if (weapon_cfg.m_delay_shot && hit_chance < 100
-		&& m_best_target->m_best_point->m_damage < static_cast<float>(m_best_target->m_pawn->m_health())) {
-		required_hc = (std::min)(required_hc + 25.f, 100.f);
-	}
-	
-	// ИСПРАВЛЕНИЕ #4: Duck на основе хитшанса
-	// Если хитшанс низкий - приседаем для улучшения точности
-	if (weapon_cfg.m_auto_stop_duck && hit_chance < required_hc && hit_chance < 95) {
-		user_cmd->m_button_state.m_button_state |= IN_DUCK;
-		user_cmd->m_button_state.m_button_state2 |= IN_DUCK;
-		user_cmd->m_button_state.m_button_state3 |= IN_DUCK;
-		
-		// Пересчитываем хитшанс после duck
-		active_weapon->update_accuracy_penality();
-		const int new_hit_chance = calculate_hit_chance(m_best_target->m_pawn, best_angle, active_weapon, weapon_data, no_spread);
-		
-		// Если duck улучшил - используем новое значение
-		const int final_hit_chance = (std::max)(hit_chance, new_hit_chance);
-		
-		// Проверяем финальный хитшанс
-		if (static_cast<float>(final_hit_chance) < required_hc) {
-			// Хитшанс всё ещё низкий - не стреляем
-			return;
-		}
-	}
-	else if (static_cast<float>(hit_chance) < required_hc) {
-		// Хитшанс низкий и duck не помог/не включен - не стреляем
-		return;
-	}
-
-	// DT / HS: тумблер + кейбинд
-	const bool dt_active = g_cfg->rage_bot.m_double_tap
-		&& g_key_handler->is_pressed(g_cfg->rage_bot.m_double_tap_key, g_cfg->rage_bot.m_double_tap_key_style);
-	const bool hs_active = g_cfg->rage_bot.m_hide_shots
-		&& g_key_handler->is_pressed(g_cfg->rage_bot.m_hide_shots_key, g_cfg->rage_bot.m_hide_shots_key_style);
-
-	// ИСПРАВЛЕНИЕ #5: Сбрасываем DT флаг если не активен
-	if (!dt_active && !hs_active) {
+	auto& cfg = weapon_config();
+	const bool have_target = m_best_target && m_best_target->m_best_point && m_best_target->m_best_point->m_hitbox >= 0;
+	const bool taser = weapon_type == WEAPONTYPE_TASER;
+	const bool on_ground = (local->m_flags() & FL_ONGROUND) != 0;
+	const float speed = local->m_vec_abs_velocity().length_2d();
+	const float max_speed = weapon->get_max_speed() > 1.f ? weapon->get_max_speed() : 250.f;
+	if (weapon->m_next_primary_attack() > (g_ctx->m_local_controller ? g_ctx->m_local_controller->m_tick_base() : 0))
 		m_dt_fired = false;
-	}
+	const bool ready = can_shoot(weapon);
 
-	const bool want_shoot = true; // Если дошли сюда - уже проверили хитшанс выше
+	if (cfg.m_auto_scope && weapon_type == WEAPONTYPE_SNIPER_RIFLE && !local->m_scoped()
+		&& on_ground && !no_spread && have_target)
+		cmd->m_button_state.m_button_state |= IN_ATTACK2;
 
-	if (dt_active || hs_active) {
-		if (want_shoot) {
-			for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
-				auto tick = user_cmd->pb.mutable_input_history(i);
-				if (tick) {
-					tick->mutable_view_angles()->set_x(best_angle.x);
-					tick->mutable_view_angles()->set_y(best_angle.y);
-					tick->mutable_view_angles()->set_z(best_angle.z);
-				}
+	const int tick = g_ctx->m_local_controller ? g_ctx->m_local_controller->m_tick_base() : 0;
+	const int until_attack = weapon->m_next_primary_attack() - tick;
+	const bool automatic = weapon_type == WEAPONTYPE_SUBMACHINEGUN || weapon_type == WEAPONTYPE_RIFLE || weapon_type == WEAPONTYPE_MACHINEGUN;
+	const bool between = cfg.m_auto_stop && cfg.m_auto_stop_between && automatic && !ready && until_attack > 0 && until_attack <= 3;
+	const bool want_stop = have_target && cfg.m_auto_stop && (ready || between);
+	if (want_stop && (on_ground || cfg.m_auto_stop_air))
+		apply_autostop(cmd, local, weapon, no_spread, cfg.m_auto_stop_early && !between, cfg.m_auto_stop_full || between, between, cfg.m_auto_stop_air);
+
+	bool fired = false;
+	if (have_target && ready) {
+		const auto* local_data = g_prediction->get_local_data();
+		vec3_t eye = local_data ? local_data->m_eye_pos : local->get_eye_pos();
+		vec3_t aim = g_math->aim_direction(eye, m_best_target->m_best_point->m_point);
+		vec3_t punch = get_removed_aim_punch_angle(local);
+		vec3_t angle = aim - punch;
+
+		const bool jump_scout = weapon->get_item_def_index() == 40 && !on_ground && local->m_scoped();
+		static int ticks_since_land = 8;
+		auto landing = g_prediction->landing(local, cmd);
+		if (landing.valid && landing.grounded && landing.will_land && landing.fraction < 0.1f)
+			ticks_since_land = 0;
+		else if (on_ground)
+			++ticks_since_land;
+		else
+			ticks_since_land = 0;
+
+		const bool just_landed = ticks_since_land < 2 && !jump_scout && !taser;
+		const float distance = eye.dist(m_best_target->m_best_point->m_point);
+		hitbox_data_t aimed = get_hitbox_data(m_best_target->m_pawn, m_best_target->m_best_point->m_hitbox, &m_active_record);
+		const float radius = aimed.m_invalid_data ? 4.f : aimed.m_radius;
+
+		float needed = required_hitchance(cfg.m_hit_chance, inaccuracy, spread, distance, radius,
+			m_best_target->m_pawn->m_health(), m_best_target->m_best_point->m_damage, taser);
+		if (cfg.m_delay_shot && !at_max_accuracy(data, weapon, inaccuracy))
+			needed = (std::min)(needed + 18.f, 100.f);
+
+		int samples = cfg.m_hit_chance_seed <= 0 ? 128 : std::clamp(cfg.m_hit_chance_seed, 8, 256);
+		const int bullets = (std::max)(1, static_cast<int>(data->m_bullets()));
+		samples = (std::max)(samples, bullets * 4);
+		samples = (std::min)(samples, 256);
+
+		const float shot_inaccuracy = no_spread ? 0.f : inaccuracy;
+		const float shot_spread = no_spread ? 0.f : spread;
+		int chance = no_spread ? 100 : hitchance(eye, angle, &m_active_record, m_best_target->m_best_point->m_hitbox,
+			weapon, shot_inaccuracy, shot_spread, samples, static_cast<int>(needed));
+
+		bool duck_for_shot = false;
+		if (!no_spread && static_cast<float>(chance) < needed && cfg.m_auto_stop && cfg.m_auto_stop_duck && on_ground) {
+			const float ducked = predict_inaccuracy(weapon, data, speed, local->m_vec_abs_velocity().z, true, true);
+			const int ducked_chance = hitchance(eye, angle, &m_active_record, m_best_target->m_best_point->m_hitbox,
+				weapon, ducked, shot_spread, samples, static_cast<int>(needed));
+			if (static_cast<float>(ducked_chance) >= needed) {
+				chance = ducked_chance;
+				duck_for_shot = true;
+				cmd->m_button_state.m_button_state |= IN_DUCK;
+				cmd->m_button_state.m_button_state2 |= IN_DUCK;
+				cmd->m_button_state.m_button_state3 |= IN_DUCK;
 			}
+		}
 
+		const bool accurate_now = no_spread || at_max_accuracy(data, weapon, inaccuracy)
+			|| (cfg.m_auto_stop_early && !cfg.m_auto_stop_full && speed <= max_speed * 0.34f)
+			|| speed <= 8.f;
+		const bool wait_for_accuracy = cfg.m_delay_shot && !accurate_now && !duck_for_shot && !jump_scout;
+		const bool scope_block = cfg.m_auto_scope && weapon_type == WEAPONTYPE_SNIPER_RIFLE && !local->m_scoped() && !no_spread;
+
+		if (!just_landed && !wait_for_accuracy && !scope_block && static_cast<float>(chance) >= needed) {
 			if (!g_cfg->rage_bot.m_silent)
-				g_interfaces->m_csgo_input->set_view_angles(best_angle);
-		}
+				g_interfaces->m_csgo_input->set_view_angles(angle);
 
-		process_exploit_attack(user_cmd, best_angle, dt_active, hs_active, want_shoot);
-		return;
+			const bool dt = g_cfg->rage_bot.m_double_tap && (g_cfg->rage_bot.m_double_tap_key <= 0
+				|| g_key_handler->is_pressed(g_cfg->rage_bot.m_double_tap_key, g_cfg->rage_bot.m_double_tap_key_style));
+			const bool hide = g_cfg->rage_bot.m_hide_shots && (g_cfg->rage_bot.m_hide_shots_key <= 0
+				|| g_key_handler->is_pressed(g_cfg->rage_bot.m_hide_shots_key, g_cfg->rage_bot.m_hide_shots_key_style));
+
+			if (dt || hide)
+				process_exploit(cmd, angle, dt, hide);
+			else
+				process_attack(cmd, angle, cfg.m_backtrack && !m_active_record.m_extrapolated);
+
+			if (m_active_handle != -1)
+				note_shot(m_active_handle, m_best_target->m_pawn, m_active_side);
+			fired = true;
+		}
 	}
 
-	// Обычная атака без эксплойтов
-	for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
-		auto tick = user_cmd->pb.mutable_input_history(i);
-		if (tick) {
-			tick->mutable_view_angles()->set_x(best_angle.x);
-			tick->mutable_view_angles()->set_y(best_angle.y);
-			tick->mutable_view_angles()->set_z(best_angle.z);
-		}
-	}
-
-	if (!g_cfg->rage_bot.m_silent)
-		g_interfaces->m_csgo_input->set_view_angles(best_angle);
-
-	process_attack(user_cmd, best_angle);
+	update_peek(cmd, local, fired, have_target);
 }

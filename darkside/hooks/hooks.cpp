@@ -352,6 +352,7 @@ HRESULT hooks::present::hk_present( IDXGISwapChain* swap_chain, unsigned int syn
 	{
 		g_render->update_background_drawlist( ImGui::GetBackgroundDrawList( ) );
 		g_visuals->on_present( );
+		g_rage_bot->on_present( );
 		g_world->draw_scope_overlay( );
 		g_menu->draw( );
 	}
