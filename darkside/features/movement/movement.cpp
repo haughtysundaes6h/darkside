@@ -225,25 +225,92 @@ void c_movement::auto_strafe(c_user_cmd* user_cmd, float previous_yaw) {
 }
 
 // ============================================================================
-// MOVEMENT FIX - ДЛЯ SILENT AIM И ANTI-AIM
+// MOVEMENT FIX - ДЛЯ SILENT AIM И ANTI-AIM (v2, quantize-aware)
 // ============================================================================
+
+// Компенсация sv_quantize_movement_input.
+//
+// В CS2 (обновление против snaptap, конец 2024) сервер округляет дробные
+// forward/left до целых {-1,0,1}. Повернутый мув-фиксом вектор вида
+// (0.94, 0.34) сервер округляет до (1,0) — направление уплывает на десятки
+// градусов, в джиттере получается зигзаг и потеря скорости ("ходит боком").
+//
+// Решение ("bypass via math"): при включенном квантайзе шлём сразу
+// нормализованные векторы 8-направленной решетки. Все ненулевые целые
+// векторы (±1,0)/(0,±1)/(±1,±1) дают ПОЛНУЮ скорость — движок нормализует
+// wishdir и клампит к maxspeed, значит решается только задача направления:
+//  - желаемое направление ложим между двумя соседями решетки (45° сетка);
+//  - чередуем их по тикам (тайм-даизеринг): среднее направление = желаемое,
+//    ошибка <= ~11°, скорость всегда максимальная;
+//  - если движемся слабее порога (контр-страйф автостопа) — шлем (0,0):
+//    сервер сам округлит дробь в ноль, поведение идентично.
+// Если квантайз выключен (community-сервера) — честная точная ротация.
+static movement_math::input quantize_move_input(movement_math::input move, int command_number)
+{
+    const float len = std::hypot(move.forward, move.left);
+
+    // Всё, что слабее полноценного нажатия клавиш (автостоп, контр-страйф,
+    // микро) — честный ноль: сервер дробь всё равно округлит в 0. Клавиши
+    // дают len >= 1 (bounded сохраняет длину), сюда они не попадают.
+    if (len < 0.95f)
+        return {};
+
+    // Направление движения в пространстве (forward, left)
+    const float target = rad2deg(std::atan2(move.left, move.forward));
+
+    const float k_exact = target / 45.0f;
+    const float k_floor = std::floor(k_exact);
+    const float k_frac = k_exact - k_floor;
+
+    const int k_a = static_cast<int>(k_floor);
+    const int k_b = k_frac > 0.0001f ? k_a + 1 : k_a;
+
+    const bool near_is_a = k_frac <= 0.5f;
+    const int k_near = near_is_a ? k_a : k_b;
+    const int k_far = near_is_a ? k_b : k_a;
+
+    // Тайм-даизеринг: 3 тика ближний сосед, 1 тик дальний.
+    // Порядок стабилен по номеру команды — без флика.
+    const int k = (command_number % 4) == 0 ? k_far : k_near;
+
+    const float angle = deg2rad(45.0f * static_cast<float>(k));
+    return { std::cos(angle), std::sin(angle) };
+}
 
 void c_movement::movement_fix(c_user_cmd* user_cmd, vec3_t original_angles) {
     if (!user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
         return;
-    
+
+    auto* base = user_cmd->pb.mutable_base();
+
+    const float fm = base->forwardmove();
+    const float sm = base->leftmove();
+
+    // Нет инпута — ротировать нечего (и не надо трогать upmove/кнопки)
+    if (std::fabs(fm) <= 0.0001f && std::fabs(sm) <= 0.0001f)
+        return;
+
+    // Лестница/ноклип — движок и так двигает по своим углам
     if (g_ctx->m_local_pawn->m_actual_move_type() != movetype_walk)
         return;
-    
-    auto* base = user_cmd->pb.mutable_base();
-    
-    // Используем встроенную ротацию из movement_math
-    auto move = movement_math::bounded(movement_math::rotate(
-        {base->forwardmove(), base->leftmove()}, 
-        original_angles.y, 
-        base->viewangles().y()
-    ));
-    
+
+    const float old_yaw = original_angles.y;
+    const float new_yaw = base->viewangles().y();
+
+    if (!std::isfinite(old_yaw) || !std::isfinite(new_yaw))
+        return;
+
+    // Точная ротация вектора движения на дельту базовых углов.
+    // bounded() клампит по Чебышёву (макс. компонент в [-1,1]) с сохранением
+    // направления: длина вектора не падает ниже 1 => скорость не режется.
+    movement_math::input move = movement_math::bounded(
+        movement_math::rotate({fm, sm}, old_yaw, new_yaw));
+
+    // Компенсация серверного квантайза
+    static auto quantize_cvar = g_interfaces->m_var->get_by_name("sv_quantize_movement_input");
+    if (quantize_cvar && quantize_cvar->get_bool())
+        move = quantize_move_input(move, user_cmd->m_command_number);
+
     base->set_forwardmove(move.forward);
     base->set_leftmove(move.left);
 }

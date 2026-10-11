@@ -494,6 +494,7 @@ void c_menu::draw_rage() {
     gui.row_begin(); ImGui::Combo("Yaw Jitter", &anti.m_yaw_jitter, jitter_modes, IM_ARRAYSIZE(jitter_modes));
 
     gui.row_checkbox("Slow Walk", &anti.m_aa_slow_walk);
+    gui.row_checkbox("Leg Jitter", &anti.m_leg_jitter);
 
     // Freestanding (gear: Mode)
     gui.row_begin();
