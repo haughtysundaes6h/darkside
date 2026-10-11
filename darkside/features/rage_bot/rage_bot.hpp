@@ -163,7 +163,7 @@ class c_rage_bot {
 	bool game_spread(c_base_player_weapon* weapon, int seed, float inaccuracy, float spread, float& out_x, float& out_y) const;
 	int hitchance(const vec3_t& eye, const vec3_t& angles, lag_record_t* record, int hitbox, c_base_player_weapon* weapon, float inaccuracy, float spread, int samples, int required) const;
 	bool at_max_accuracy(c_cs_weapon_base_v_data* data, c_base_player_weapon* weapon, float inaccuracy) const;
-	float predict_inaccuracy(c_base_player_weapon* weapon, c_cs_weapon_base_v_data* data, float speed, float vertical_speed, bool on_ground, bool ducking) const;
+	float predict_inaccuracy(c_base_player_weapon* weapon, c_cs_weapon_base_v_data* data, float speed, float vertical_speed, bool on_ground, bool ducking, int mode_override = -1) const;
 	float required_hitchance(int configured, float inaccuracy, float spread, float distance, float radius, int health, float damage, bool taser) const;
 
 	int resolver_side(int handle, c_cs_player_pawn* pawn, const lag_record_t* record);

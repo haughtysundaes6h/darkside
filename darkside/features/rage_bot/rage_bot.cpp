@@ -1031,12 +1031,12 @@ aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float
 }
 
 float c_rage_bot::predict_inaccuracy(c_base_player_weapon* weapon, c_cs_weapon_base_v_data* data,
-	float speed, float vertical_speed, bool on_ground, bool ducking) const {
+	float speed, float vertical_speed, bool on_ground, bool ducking, int mode_override) const {
 	if (!weapon)
 		return 1.f;
 
 	const bool scoped = g_ctx->m_local_pawn && g_ctx->m_local_pawn->m_scoped();
-	int mode = weapon->m_weapon_mode();
+	int mode = mode_override == 0 || mode_override == 1 ? mode_override : weapon->m_weapon_mode();
 	if (mode != 0 && mode != 1)
 		mode = scoped ? 1 : 0;
 
@@ -1859,44 +1859,6 @@ void c_rage_bot::on_create_move() {
 	const bool sniper = weapon_type == WEAPONTYPE_SNIPER_RIFLE;
 	const int scope_tick = g_ctx->m_local_controller ? g_ctx->m_local_controller->m_tick_base() : 0;
 	const bool unscoped = !local->m_scoped() && weapon->m_zoom_level() <= 0;
-	bool enemy_for_scope = have_target;
-	if (!enemy_for_scope && !m_aim_targets.empty() && g_ctx->m_user_cmd) {
-		const int fov = g_cfg->rage_bot.m_fov;
-		if (fov <= 0 || fov >= 180)
-			enemy_for_scope = true;
-		else {
-			vec3_t view_angles = player_camera_angles();
-			vec3_t forward{};
-			g_math->angle_vectors(view_angles, forward);
-			forward = forward.normalize();
-			const float cos_fov = std::cos(deg2rad(static_cast<float>(fov)));
-			const auto* local_data = g_prediction->get_local_data();
-			vec3_t eye = local_data ? local_data->m_eye_pos : local->get_eye_pos();
-			for (const auto& [handle, target] : m_aim_targets) {
-				(void)handle;
-				if (!target.m_lag_record)
-					continue;
-				vec3_t to{
-					target.m_lag_record->m_origin.x - eye.x,
-					target.m_lag_record->m_origin.y - eye.y,
-					target.m_lag_record->m_origin.z + 48.f - eye.z
-				};
-				const float len = std::sqrt(to.x * to.x + to.y * to.y + to.z * to.z);
-				if (len > 1.f && (to.x * forward.x + to.y * forward.y + to.z * forward.z) / len >= cos_fov) {
-					enemy_for_scope = true;
-					break;
-				}
-			}
-		}
-	}
-	if (cfg.m_auto_scope && sniper && unscoped && enemy_for_scope) {
-		const bool secondary_ready = weapon->m_next_secondary_attack() <= scope_tick;
-		const bool cooled = m_last_scope_tick < 0 || scope_tick - m_last_scope_tick >= 12;
-		if (secondary_ready && cooled) {
-			press_scope(cmd);
-			m_last_scope_tick = scope_tick;
-		}
-	}
 	if (!unscoped)
 		m_last_scope_tick = -1;
 
@@ -1931,9 +1893,23 @@ void c_rage_bot::on_create_move() {
 		hitbox_data_t aimed = get_hitbox_data(m_best_target->m_pawn, m_best_target->m_best_point->m_hitbox, &m_active_record);
 		const float radius = aimed.m_invalid_data ? 4.f : aimed.m_radius;
 
-		float needed = required_hitchance(cfg.m_hit_chance, inaccuracy, spread, distance, radius,
+		// Scope only for a shot we would take once zoomed. An enemy in FOV is not a shot.
+		const bool scope_block = cfg.m_auto_scope && sniper && unscoped && !no_spread;
+		const bool ducking = (local->m_flags() & FL_DUCKING) != 0;
+		const float vertical = local->m_vec_abs_velocity().z;
+		const float scoped_inaccuracy = scope_block
+			? predict_inaccuracy(weapon, data, speed, vertical, on_ground, ducking, 1)
+			: inaccuracy;
+		const float eval_inaccuracy = scope_block ? scoped_inaccuracy : inaccuracy;
+
+		float needed = required_hitchance(cfg.m_hit_chance, eval_inaccuracy, spread, distance, radius,
 			m_best_target->m_pawn->m_health(), m_best_target->m_best_point->m_damage, taser);
-		if (cfg.m_delay_shot && !at_max_accuracy(data, weapon, inaccuracy))
+		const bool early_accurate = cfg.m_auto_stop_early && !cfg.m_auto_stop_full && speed <= max_speed * 0.34f;
+		const bool standing_accurate = on_ground && speed <= (ducking ? 10.f : 0.1f);
+		const bool accurate_now = scope_block
+			? (no_spread || speed <= 8.f || early_accurate || standing_accurate)
+			: (no_spread || at_max_accuracy(data, weapon, inaccuracy) || early_accurate || speed <= 8.f);
+		if (cfg.m_delay_shot && !accurate_now)
 			needed = (std::min)(needed + 18.f, 100.f);
 
 		int samples = cfg.m_hit_chance_seed <= 0 ? 128 : std::clamp(cfg.m_hit_chance_seed, 8, 256);
@@ -1941,14 +1917,14 @@ void c_rage_bot::on_create_move() {
 		samples = (std::max)(samples, bullets * 4);
 		samples = (std::min)(samples, 256);
 
-		const float shot_inaccuracy = no_spread ? 0.f : inaccuracy;
+		const float shot_inaccuracy = no_spread ? 0.f : eval_inaccuracy;
 		const float shot_spread = no_spread ? 0.f : spread;
 		int chance = no_spread ? 100 : hitchance(eye, angle, &m_active_record, m_best_target->m_best_point->m_hitbox,
 			weapon, shot_inaccuracy, shot_spread, samples, static_cast<int>(needed));
 
 		bool duck_for_shot = false;
 		if (!no_spread && static_cast<float>(chance) < needed && cfg.m_auto_stop && cfg.m_auto_stop_duck && on_ground) {
-			const float ducked = predict_inaccuracy(weapon, data, speed, local->m_vec_abs_velocity().z, true, true);
+			const float ducked = predict_inaccuracy(weapon, data, speed, vertical, true, true, scope_block ? 1 : -1);
 			const int ducked_chance = hitchance(eye, angle, &m_active_record, m_best_target->m_best_point->m_hitbox,
 				weapon, ducked, shot_spread, samples, static_cast<int>(needed));
 			if (static_cast<float>(ducked_chance) >= needed) {
@@ -1960,13 +1936,18 @@ void c_rage_bot::on_create_move() {
 			}
 		}
 
-		const bool accurate_now = no_spread || at_max_accuracy(data, weapon, inaccuracy)
-			|| (cfg.m_auto_stop_early && !cfg.m_auto_stop_full && speed <= max_speed * 0.34f)
-			|| speed <= 8.f;
 		const bool wait_for_accuracy = cfg.m_delay_shot && !accurate_now && !duck_for_shot && !jump_scout;
-		const bool scope_block = cfg.m_auto_scope && sniper && !local->m_scoped() && weapon->m_zoom_level() <= 0 && !no_spread;
+		const bool shot_ready = !just_landed && !wait_for_accuracy && static_cast<float>(chance) >= needed;
+		if (shot_ready && scope_block) {
+			const bool secondary_ready = weapon->m_next_secondary_attack() <= scope_tick;
+			const bool cooled = m_last_scope_tick < 0 || scope_tick - m_last_scope_tick >= 12;
+			if (secondary_ready && cooled) {
+				press_scope(cmd);
+				m_last_scope_tick = scope_tick;
+			}
+		}
 
-		if (!just_landed && !wait_for_accuracy && !scope_block && static_cast<float>(chance) >= needed) {
+		if (shot_ready && !scope_block) {
 			if (!g_cfg->rage_bot.m_silent)
 				g_interfaces->m_csgo_input->set_view_angles(angle);
 
