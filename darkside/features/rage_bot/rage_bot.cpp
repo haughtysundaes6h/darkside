@@ -5,6 +5,7 @@
 #include "../../render/render.hpp"
 
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 
 // ============================================================================
@@ -1445,6 +1446,21 @@ vec3_t player_camera_angles() {
 	return {};
 }
 
+float g_render_fps = 144.f;
+
+void note_render_frame() {
+	static auto last = std::chrono::steady_clock::now();
+	const auto now = std::chrono::steady_clock::now();
+	const float dt = std::chrono::duration<float>(now - last).count();
+	last = now;
+	if (dt > 0.0008f && dt < 0.5f)
+		g_render_fps += ((1.f / dt) - g_render_fps) * 0.3f;
+}
+
+int scan_budget() {
+	return g_render_fps < 60.f ? 1 : 2;
+}
+
 void c_rage_bot::select_target(float inaccuracy, float spread) {
 	m_best_target = nullptr;
 	if (m_aim_targets.empty() || !g_ctx->m_local_pawn)
@@ -1456,56 +1472,72 @@ void c_rage_bot::select_target(float inaccuracy, float spread) {
 	if (!weapon_data || !local)
 		return;
 
-	float cos_fov = -2.f;
+	vec3_t angles = player_camera_angles();
 	vec3_t view_dir{};
-	if (g_cfg->rage_bot.m_fov > 0 && g_cfg->rage_bot.m_fov < 180) {
-		vec3_t angles = player_camera_angles();
-		g_math->angle_vectors(angles, view_dir);
-		view_dir = view_dir.normalize();
+	g_math->angle_vectors(angles, view_dir);
+	view_dir = view_dir.normalize();
+	float cos_fov = -2.f;
+	if (g_cfg->rage_bot.m_fov > 0 && g_cfg->rage_bot.m_fov < 180)
 		cos_fov = std::cos(deg2rad(static_cast<float>(g_cfg->rage_bot.m_fov)));
+
+	// Closest to the camera first. Whoever you are looking at is the target,
+	// and a newly visible shootable enemy replaces the old one the same tick.
+	struct ranked_t {
+		int handle;
+		float dot;
+		aim_target_t* target;
+	};
+	ranked_t ranked[64]{};
+	int ranked_count = 0;
+	for (auto& [handle, target] : m_aim_targets) {
+		if (!target.m_lag_record || !target.m_pawn || !target.m_pawn->is_alive() || ranked_count >= 64)
+			continue;
+		vec3_t aim_at = target.m_lag_record->m_origin;
+		float height = target.m_lag_record->m_maxs.z;
+		if (!(height > 8.f && height < 90.f))
+			height = 64.f;
+		aim_at.z += height * 0.82f;
+		vec3_t to = aim_at - local->m_eye_pos;
+		const float len = to.length();
+		if (len < 1.f)
+			continue;
+		const float dot = (to / len).dot(view_dir);
+		if (cos_fov > -1.5f && dot < cos_fov)
+			continue;
+		ranked[ranked_count++] = { handle, dot, &target };
+	}
+	for (int i = 1; i < ranked_count; ++i) {
+		ranked_t key = ranked[i];
+		int j = i;
+		while (j > 0 && ranked[j - 1].dot < key.dot) {
+			ranked[j] = ranked[j - 1];
+			--j;
+		}
+		ranked[j] = key;
 	}
 
-	float best_damage = -1.f;
-	float best_distance = FLT_MAX;
-	bool best_lethal = false;
-
-	for (auto& [handle, target] : m_aim_targets) {
-		if (!target.m_lag_record || !target.m_pawn || !target.m_pawn->is_alive())
-			continue;
-
+	const int limit = (std::min)(scan_budget(), ranked_count);
+	for (int i = 0; i < limit; ++i) {
+		auto& entry = ranked[i];
+		auto& target = *entry.target;
 		const int minimum = minimum_for(target.m_pawn, weapon_data);
 
 		lag_record_t predicted{};
-		const bool have_prediction = build_prediction(handle, predicted);
+		const bool have_prediction = build_prediction(entry.handle, predicted);
 		lag_record_t candidate = have_prediction ? predicted : *target.m_lag_record;
 
-		const int side = resolver_side(handle, target.m_pawn, &candidate);
+		const int side = resolver_side(entry.handle, target.m_pawn, &candidate);
 		float damage = 0.f;
 		aim_point_t point = select_points(&candidate, damage, inaccuracy, spread, side, minimum);
 		if (point.m_hitbox < 0 || damage < static_cast<float>(minimum))
 			continue;
 
-		if (cos_fov > -1.5f) {
-			vec3_t to = point.m_point - local->m_eye_pos;
-			const float len = to.length();
-			if (len > 1.f && (to / len).dot(view_dir) < cos_fov)
-				continue;
-		}
-
-		const float distance = point.m_point.dist(local->m_eye_pos);
-		const bool kills = damage >= static_cast<float>(target.m_pawn->m_health());
-		const bool better = kills != best_lethal ? kills
-			: (damage > best_damage || (damage == best_damage && distance < best_distance));
-		if (better) {
-			best_damage = damage;
-			best_distance = distance;
-			best_lethal = kills;
-			m_active_record = candidate;
-			m_active_handle = handle;
-			m_active_side = side;
-			m_best_target = &target;
-			m_best_target->m_best_point = std::make_unique<aim_point_t>(point);
-		}
+		m_active_record = candidate;
+		m_active_handle = entry.handle;
+		m_active_side = side;
+		m_best_target = &target;
+		m_best_target->m_best_point = std::make_unique<aim_point_t>(point);
+		break;
 	}
 }
 
@@ -1785,6 +1817,7 @@ void c_rage_bot::update_peek(c_user_cmd* cmd, c_cs_player_pawn* local, bool fire
 }
 
 void c_rage_bot::on_present() {
+	note_render_frame();
 	peek_draw_t draw{};
 	{
 		std::lock_guard lock(m_peek_mutex);
@@ -1889,6 +1922,16 @@ void c_rage_bot::on_create_move() {
 	const bool unscoped = !local->m_scoped() && weapon->m_zoom_level() <= 0;
 	if (!unscoped)
 		m_last_scope_tick = -1;
+	// A damage point is a shot. Do not wait for hitchance — that check uses the
+	// unscoped cone and never lets the zoom start.
+	if (cfg.m_auto_scope && sniper && unscoped && have_target && weapon->m_clip1() > 0 && !weapon->m_in_reload()) {
+		const bool secondary_ready = weapon->m_next_secondary_attack() <= scope_tick;
+		const bool cooled = m_last_scope_tick < 0 || scope_tick - m_last_scope_tick >= 8;
+		if (secondary_ready && cooled) {
+			press_scope(cmd);
+			m_last_scope_tick = scope_tick;
+		}
+	}
 
 	const int tick = g_ctx->m_local_controller ? g_ctx->m_local_controller->m_tick_base() : 0;
 	const int until_attack = weapon->m_next_primary_attack() - tick;
@@ -1966,15 +2009,6 @@ void c_rage_bot::on_create_move() {
 
 		const bool wait_for_accuracy = cfg.m_delay_shot && !accurate_now && !duck_for_shot && !jump_scout;
 		const bool shot_ready = !just_landed && !wait_for_accuracy && static_cast<float>(chance) >= needed;
-		if (shot_ready && scope_block) {
-			const bool secondary_ready = weapon->m_next_secondary_attack() <= scope_tick;
-			const bool cooled = m_last_scope_tick < 0 || scope_tick - m_last_scope_tick >= 12;
-			if (secondary_ready && cooled) {
-				press_scope(cmd);
-				m_last_scope_tick = scope_tick;
-			}
-		}
-
 		if (shot_ready && !scope_block) {
 			if (!g_cfg->rage_bot.m_silent)
 				g_interfaces->m_csgo_input->set_view_angles(angle);

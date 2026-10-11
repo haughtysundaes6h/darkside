@@ -1,4 +1,5 @@
 #include "anti_hit.hpp"
+#include <cmath>
 #include "../eng_pred/eng_pred.hpp"
 #include "../../entity_system/entity.hpp"
 #include "../movement/movement.hpp"
@@ -405,7 +406,7 @@ float c_anti_hit::get_at_target_yaw() {
 
 c_cs_player_pawn* c_anti_hit::find_closest_enemy() {
     auto* local = g_ctx->m_local_pawn;
-    if (!local)
+    if (!local || !g_interfaces || !g_interfaces->m_csgo_input)
         return nullptr;
 
     auto local_data = g_prediction->get_local_data();
@@ -413,18 +414,30 @@ c_cs_player_pawn* c_anti_hit::find_closest_enemy() {
         return nullptr;
 
     vec3_t eye_pos = local_data->m_eye_pos;
+    vec3_t forward = g_math->angle_vectors(g_interfaces->m_csgo_input->get_view_angles());
+    forward = forward.normalize();
+    float cos_fov = -2.f;
+    if (g_cfg->rage_bot.m_fov > 0 && g_cfg->rage_bot.m_fov < 180)
+        cos_fov = std::cos(deg2rad(static_cast<float>(g_cfg->rage_bot.m_fov)));
 
     c_cs_player_pawn* best_target = nullptr;
-    float best_distance = FLT_MAX;
+    float best_dot = cos_fov;
 
     for (auto* entity : g_entity_system->get_players(ENTITY_ENEMIES_ONLY)) {
         if (!entity || !entity->is_alive() || !entity->m_scene_node())
             continue;
 
-        float distance = entity->m_scene_node()->m_abs_origin().dist(eye_pos);
-
-        if (distance < best_distance) {
-            best_distance = distance;
+        vec3_t pos = entity->m_scene_node()->m_abs_origin();
+        pos.z += 64.f;
+        vec3_t to = pos - eye_pos;
+        const float len = to.length();
+        if (len < 1.f)
+            continue;
+        const float dot = (to / len).dot(forward);
+        if (dot < cos_fov)
+            continue;
+        if (!best_target || dot > best_dot) {
+            best_dot = dot;
             best_target = entity;
         }
     }
