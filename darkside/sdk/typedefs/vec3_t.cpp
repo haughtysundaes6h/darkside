@@ -27,7 +27,20 @@ float vec3_t::dot( float* v )
 	return this->x * v[ 0 ] + this->y * v[ 1 ] + this->z * v[ 2 ];
 }
 
+float vec3_t::dot( float* v ) const
+{
+	return this->x * v[ 0 ] + this->y * v[ 1 ] + this->z * v[ 2 ];
+}
+
 float vec3_t::dot( vec3_t v, bool additional )
+{
+	if ( additional )
+		return this->x * v.y + this->y * v.x + this->z * v.z;
+
+	return this->x * v.x + this->y * v.y + this->z * v.z;
+}
+
+float vec3_t::dot( vec3_t v, bool additional ) const
 {
 	if ( additional )
 		return this->x * v.y + this->y * v.x + this->z * v.z;
@@ -105,7 +118,15 @@ float vec3_t::dist( vec3_t vec ) {
 	return ( *this - vec ).length( );
 }
 
+float vec3_t::dist( vec3_t vec ) const {
+	return ( *this - vec ).length( );
+}
+
 float vec3_t::dist_sqr( vec3_t vec ) {
+	return ( *this - vec ).length_sqr( );
+}
+
+float vec3_t::dist_sqr( vec3_t vec ) const {
 	return ( *this - vec ).length_sqr( );
 }
 
@@ -113,7 +134,15 @@ float vec3_t::dist_2d( vec3_t vec ) {
 	return ( *this - vec ).length_2d( );
 }
 
+float vec3_t::dist_2d( vec3_t vec ) const {
+	return ( *this - vec ).length_2d( );
+}
+
 float vec3_t::dist_2d_sqr( vec3_t vec ) {
+	return ( *this - vec ).length_2d_sqr( );
+}
+
+float vec3_t::dist_2d_sqr( vec3_t vec ) const {
 	return ( *this - vec ).length_2d_sqr( );
 }
 
@@ -121,7 +150,15 @@ float vec3_t::length( ) {
 	return std::sqrtf( this->length_sqr( ) );
 }
 
+float vec3_t::length( ) const {
+	return std::sqrtf( this->length_sqr( ) );
+}
+
 float vec3_t::length_sqr( ) {
+	return x * x + y * y + z * z;
+}
+
+float vec3_t::length_sqr( ) const {
 	return x * x + y * y + z * z;
 }
 
@@ -134,6 +171,12 @@ float vec3_t::length_2d_sqr( ) const {
 }
 
 vec3_t vec3_t::normalize( ) {
+	float length = this->length( );
+
+	return *this / length;
+}
+
+vec3_t vec3_t::normalize( ) const {
 	float length = this->length( );
 
 	return *this / length;

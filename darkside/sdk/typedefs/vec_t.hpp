@@ -249,7 +249,15 @@ public:
 		return vec3_t( x - vec.x, y - vec.y, z - vec.z );
 	}
 
+	vec3_t operator-( const vec3_t& vec ) const {
+		return vec3_t( x - vec.x, y - vec.y, z - vec.z );
+	}
+
 	vec3_t operator-( float n ) {
+		return vec3_t( x - n, y - n, z - n );
+	}
+
+	vec3_t operator-( float n ) const {
 		return vec3_t( x - n, y - n, z - n );
 	}
 
@@ -273,11 +281,23 @@ public:
 		return vec3_t( x / vec.x, y / vec.y, z / vec.z );
 	}
 
+	vec3_t operator/( const vec3_t& vec ) const {
+		return vec3_t( x / vec.x, y / vec.y, z / vec.z );
+	}
+
 	vec3_t operator/( float n ) {
 		return vec3_t( x / n, y / n, z / n );
 	}
 
+	vec3_t operator/( float n ) const {
+		return vec3_t( x / n, y / n, z / n );
+	}
+
 	vec3_t operator/( int n ) {
+		return vec3_t( x / n, y / n, z / n );
+	}
+
+	vec3_t operator/( int n ) const {
 		return vec3_t( x / n, y / n, z / n );
 	}
 
@@ -301,7 +321,15 @@ public:
 		return vec3_t( x * vec.x, y * vec.y, z * vec.z );
 	}
 
+	vec3_t operator*( const vec3_t& vec ) const {
+		return vec3_t( x * vec.x, y * vec.y, z * vec.z );
+	}
+
 	vec3_t operator*( float n ) {
+		return vec3_t( x * n, y * n, z * n );
+	}
+
+	vec3_t operator*( float n ) const {
 		return vec3_t( x * n, y * n, z * n );
 	}
 
@@ -337,7 +365,11 @@ public:
 
 	float dot( float* v );
 
+	float dot( float* v ) const;
+
 	float dot( vec3_t v, bool additional = false );
+
+	float dot( vec3_t v, bool additional = false ) const;
 
 	void vector_cross_product( vec3_t a, vec3_t b, vec3_t& result );
 
@@ -359,21 +391,35 @@ public:
 
 	float dist( vec3_t vec );
 
+	float dist( vec3_t vec ) const;
+
 	float dist_sqr( vec3_t vec );
+
+	float dist_sqr( vec3_t vec ) const;
 
 	float dist_2d( vec3_t vec );
 
+	float dist_2d( vec3_t vec ) const;
+
 	float dist_2d_sqr( vec3_t vec );
+
+	float dist_2d_sqr( vec3_t vec ) const;
 
 	float length( );
 
+	float length( ) const;
+
 	float length_sqr( );
+
+	float length_sqr( ) const;
 
 	float length_2d( ) const;
 
 	float length_2d_sqr( ) const;
 
 	vec3_t normalize( );
+
+	vec3_t normalize( ) const;
 
 	float normalize_movement( );
 
