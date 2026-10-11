@@ -915,24 +915,13 @@ bool c_gui::begin_popup_card_body(const char* popup_name, ImGuiID id, float anim
 }
 
 void c_gui::end_popup_card() {
-    // Drag the card by its empty space (anything that isn't a widget). Evaluated here, after
-    // the card's content, so this frame's hovered item is known. NoPopupHierarchy: a child
-    // popup opened from this card is not "this card" for the purpose of grabbing it.
+    // Popup cards are pinned to their anchor (the row/button they open from): they never drag.
+    // The drag offset is forced to zero so the positioning in begin_popup_card[_at]() always
+    // places the card flush against its anchor, which follows the menu as it moves.
     if (!m_popup_scopes.empty() && m_popup_scopes.back().open) {
-        ImGuiIO& io = ImGui::GetIO();
         popup_animation_state& state = m_popup_animations[m_popup_scopes.back().id];
-        if (!state.dragging && ImGui::IsMouseClicked(0) && !ImGui::IsAnyItemHovered() &&
-            ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_NoPopupHierarchy))
-            state.dragging = true;
-        if (state.dragging) {
-            if (ImGui::IsMouseDown(0))
-                state.drag_target += io.MouseDelta;
-            else
-                state.dragging = false;
-        }
-        state.drag = ImLerp(state.drag, state.drag_target, 1.f - expf(-20.f * ImMin(io.DeltaTime, 0.05f)));
-        if (ImLengthSqr(state.drag_target - state.drag) < 0.25f)
-            state.drag = state.drag_target;
+        state.dragging = false;
+        state.drag = state.drag_target = ImVec2(0.f, 0.f);
     }
     end_animated_popup();
     if (!m_row_started_stack.empty()) {
