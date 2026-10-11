@@ -226,9 +226,9 @@ float c_anti_hit::get_freestanding_yaw(c_user_cmd* user_cmd, float base_yaw) {
     if (!local || !local->m_scene_node())
         return base_yaw;
 
-    const vec3_t local_pos = local->m_scene_node()->m_abs_origin();
-    const vec3_t target_pos = target->m_scene_node()->m_abs_origin();
-    const vec3_t delta = target_pos - local_pos;
+    vec3_t local_pos = local->m_scene_node()->m_abs_origin();
+    vec3_t target_pos = target->m_scene_node()->m_abs_origin();
+    vec3_t delta = target_pos - local_pos;
 
     if (std::fabs(delta.x) < 0.001f && std::fabs(delta.y) < 0.001f)
         return base_yaw;

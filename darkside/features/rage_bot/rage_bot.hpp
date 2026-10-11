@@ -109,12 +109,12 @@ struct lag_record_t
 		if (ticks <= 0 || !std::isfinite(m_simulation_time))
 			return;
 
-		const vec3_t velocity = m_vec_velocity;
+		vec3_t velocity = m_vec_velocity;
 		if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z))
 			return;
 
 		const float delta_time = TICKS_TO_TIME(ticks);
-		const vec3_t shift = velocity * delta_time;
+		vec3_t shift = velocity * delta_time;
 
 		m_origin = m_origin + shift;
 		m_vec_mins = m_vec_mins + shift;

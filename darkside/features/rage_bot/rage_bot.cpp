@@ -1,7 +1,6 @@
 #include "rage_bot.hpp"
 #include "../../entity_system/entity.hpp"
 #include "../movement/movement.hpp"
-#include "../protobufs/protobufs.hpp"
 #include "../../render/render.hpp"
 
 #include <cfloat>
@@ -271,15 +270,16 @@ float c_rage_bot::calc_point_scale(const vec3_t& point, float hitbox_radius)
 	if (!local_data || hitbox_radius <= 0.f)
 		return 0.f;
 
-	const float spread = local_data->m_spread + local_data->m_inaccuracy;
+	float spread = local_data->m_spread + local_data->m_inaccuracy;
 	if (!(spread > 0.f))
 		return 95.f;
 
-	const float distance = point.dist(local_data->m_eye_pos);
+	vec3_t pt = point;
+	float distance = pt.dist(local_data->m_eye_pos);
 	if (distance <= 1.f)
 		return 95.f;
 
-	const float cone_radius = distance * std::tan(spread);
+	float cone_radius = distance * std::tan(spread);
 	float scale = ((hitbox_radius - cone_radius) / hitbox_radius) * 100.f;
 
 	return std::clamp(scale, 0.f, 95.f);
@@ -323,13 +323,14 @@ std::vector<vec3_t> c_rage_bot::calculate_capsule_points(float radius, matrix3x4
 	std::vector<vec3_t> points;
 	points.reserve(rings * per_ring);
 
-	const vec3_t axis = hitbox.m_maxs - hitbox.m_mins;
-	const float axis_len = axis.length();
-	const vec3_t axis_dir = axis_len > 0.001f ? axis / axis_len : vec3_t(1.f, 0.f, 0.f);
+	vec3_t axis = hitbox.m_maxs - hitbox.m_mins;
+	float axis_len = axis.length();
+	vec3_t axis_dir = axis_len > 0.001f ? axis / axis_len : vec3_t(1.f, 0.f, 0.f);
 
-	const vec3_t ref = std::fabs(axis_dir.y) < 0.9f ? vec3_t(0.f, 1.f, 0.f) : vec3_t(1.f, 0.f, 0.f);
-	vec3_t ring_u = ref - axis_dir * axis_dir.dot(ref);
-	const float u_len = ring_u.length();
+	vec3_t ref = std::fabs(axis_dir.y) < 0.9f ? vec3_t(0.f, 1.f, 0.f) : vec3_t(1.f, 0.f, 0.f);
+	vec3_t temp = axis_dir * axis_dir.dot(ref);
+	vec3_t ring_u = ref - temp;
+	float u_len = ring_u.length();
 	ring_u = u_len < 0.0001f ? vec3_t(0.f, 0.f, 1.f) : ring_u / u_len;
 	vec3_t ring_v = {
 		axis_dir.y * ring_u.z - axis_dir.z * ring_u.y,
@@ -337,21 +338,22 @@ std::vector<vec3_t> c_rage_bot::calculate_capsule_points(float radius, matrix3x4
 		axis_dir.x * ring_u.y - axis_dir.y * ring_u.x
 	};
 
-	const vec3_t ring_start = hitbox.m_mins + axis_dir * hitbox.m_radius;
-	const vec3_t ring_end = hitbox.m_maxs - axis_dir * hitbox.m_radius;
+	vec3_t ring_start = hitbox.m_mins + axis_dir * hitbox.m_radius;
+	vec3_t ring_end = hitbox.m_maxs - axis_dir * hitbox.m_radius;
 
 	for (int ring = 0; ring < rings; ++ring)
 	{
-		const float t = rings == 1 ? 0.5f : float(ring) / float(rings - 1);
-		const vec3_t ring_center = ring_start + (ring_end - ring_start) * t;
+		float t_val = rings == 1 ? 0.5f : float(ring) / float(rings - 1);
+		vec3_t diff = ring_end - ring_start;
+		vec3_t ring_center = ring_start + diff * t_val;
 
 		for (int p = 0; p < per_ring; ++p)
 		{
-			const float theta = _pi2 * float(p) / float(per_ring);
-			const float cu = std::cos(theta) * radius;
-			const float su = std::sin(theta) * radius;
+			float theta = _pi2 * float(p) / float(per_ring);
+			float cu = std::cos(theta) * radius;
+			float su = std::sin(theta) * radius;
 
-			const vec3_t point_local = {
+			vec3_t point_local = {
 				ring_center.x + ring_u.x * cu + ring_v.x * su,
 				ring_center.y + ring_u.y * cu + ring_v.y * su,
 				ring_center.z + ring_u.z * cu + ring_v.z * su
@@ -575,7 +577,8 @@ void c_rage_bot::select_target()
 	float cos_fov = -1.f;
 	if (rage_cfg.m_fov > 0 && rage_cfg.m_fov < 180) {
 		vec3_t view_dir{};
-		vec3_t view_angles = g_ctx->m_user_cmd->pb.base().viewangles();
+		auto view_angles_pb = g_ctx->m_user_cmd->pb.base().viewangles();
+		vec3_t view_angles = { view_angles_pb.x(), view_angles_pb.y(), view_angles_pb.z() };
 		g_math->angle_vectors(view_angles, view_dir);
 		m_fov_dir = view_dir.normalize();
 		cos_fov = std::cos(deg2rad(static_cast<float>(rage_cfg.m_fov)));
@@ -614,8 +617,9 @@ void c_rage_bot::select_target()
 
 		if (cos_fov > -1.f)
 		{
-			vec3_t to_point = point.m_point - local_data->m_eye_pos;
-			const float len = to_point.length();
+			vec3_t eye_pos = local_data->m_eye_pos;
+			vec3_t to_point = point.m_point - eye_pos;
+			float len = to_point.length();
 			if (len > 1.f)
 			{
 				to_point = to_point / len;
@@ -624,7 +628,7 @@ void c_rage_bot::select_target()
 			}
 		}
 
-		const float distance = point.m_point.dist(local_data->m_eye_pos);
+		float distance = point.m_point.dist(local_data->m_eye_pos);
 		if (damage > highest_damage || (damage == highest_damage && distance < closest_distance))
 		{
 			highest_damage = damage;
@@ -645,39 +649,44 @@ void c_rage_bot::select_target()
 bool c_rage_bot::ray_intersects_capsule(const vec3_t& start, const vec3_t& dir_normalized,
 	const vec3_t& cap_a, const vec3_t& cap_b, float radius, float max_dist)
 {
-	const vec3_t d1 = cap_b - cap_a;
-	const vec3_t r = cap_a - start;
-	const vec3_t d2 = dir_normalized;
+	vec3_t ca = cap_a;
+	vec3_t cb = cap_b;
+	vec3_t st = start;
+	vec3_t dn = dir_normalized;
+	
+	vec3_t d1 = cb - ca;
+	vec3_t r = ca - st;
+	vec3_t d2 = dn;
 
-	const float a = d1.dot(d1);
-	const float e = d2.dot(d2);
-	const float b = d1.dot(d2);
-	const float c = d1.dot(r);
-	const float f = d2.dot(r);
+	float a_val = d1.dot(d1);
+	float e_val = d2.dot(d2);
+	float b_val = d1.dot(d2);
+	float c_val = d1.dot(r);
+	float f_val = d2.dot(r);
 
-	const float denom = a * e - b * b;
+	float denom = a_val * e_val - b_val * b_val;
 
 	float s = 0.f;
 	float t = 0.f;
 
-	if (a < 1e-6f || denom < 1e-6f)
+	if (a_val < 1e-6f || denom < 1e-6f)
 	{
-		t = e > 1e-6f ? f / e : 0.f;
+		t = e_val > 1e-6f ? f_val / e_val : 0.f;
 	}
 	else
 	{
-		t = (f * a - c * b) / denom;
-		s = a > 1e-6f ? (t * b - c) / a : 0.f;
+		t = (f_val * a_val - c_val * b_val) / denom;
+		s = a_val > 1e-6f ? (t * b_val - c_val) / a_val : 0.f;
 		s = std::clamp(s, 0.f, 1.f);
 	}
 
 	t = std::clamp(t, 0.f, max_dist);
 
-	if (a > 1e-6f)
-		s = std::clamp((t * b - c) / a, 0.f, 1.f);
+	if (a_val > 1e-6f)
+		s = std::clamp((t * b_val - c_val) / a_val, 0.f, 1.f);
 
-	const vec3_t closest_ray = start + d2 * t;
-	const vec3_t closest_cap = cap_a + d1 * s;
+	vec3_t closest_ray = st + d2 * t;
+	vec3_t closest_cap = ca + d1 * s;
 
 	return closest_ray.dist(closest_cap) <= radius;
 }
@@ -701,7 +710,7 @@ bool c_rage_bot::ray_hits_hitboxes(const vec3_t& start, const vec3_t& dir_normal
 
 		if (hitbox == HITBOX_HEAD)
 		{
-			const vec3_t center = (cap_a + cap_b) * 0.5f;
+			vec3_t center = (cap_a + cap_b) * 0.5f;
 			if (ray_intersects_capsule(start, dir_normalized, center, center, data.m_radius, max_dist))
 				return true;
 		}
@@ -792,7 +801,7 @@ int c_rage_bot::calculate_hit_chance(c_cs_player_pawn* pawn, vec3_t angles, c_ba
 	if (no_spread)
 		return 100;
 
-	const vec3_t shoot_pos = local_data->m_eye_pos;
+	vec3_t shoot_pos = local_data->m_eye_pos;
 
 	if (m_best_target && m_best_target->m_best_point &&
 		shoot_pos.dist(m_best_target->m_best_point->m_point) > weapon_data->m_range())
@@ -1085,9 +1094,10 @@ void c_rage_bot::on_create_move()
 
 	m_active_record.apply(m_active_record.m_pawn);
 
-	const vec3_t angle = g_math->aim_direction(local_data->m_eye_pos, m_best_target->m_best_point->m_point);
+	vec3_t angle = g_math->aim_direction(local_data->m_eye_pos, m_best_target->m_best_point->m_point);
 
-	const vec3_t best_angle = angle - get_removed_aim_punch_angle(local_player);
+	vec3_t punch = get_removed_aim_punch_angle(local_player);
+	vec3_t best_angle = angle - punch;
 
 	const int hit_chance = calculate_hit_chance(m_best_target->m_pawn, best_angle, active_weapon, weapon_data, no_spread);
 
