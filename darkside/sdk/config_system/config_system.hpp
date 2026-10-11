@@ -111,6 +111,7 @@ public:
         // Other
         bool m_auto_scope = false;
         bool m_penetration = false;
+        bool m_prefer_body_aim = false;  // Hitboxes gear
     };
     
     struct rage_bot_t {
@@ -141,7 +142,17 @@ public:
         bool m_hide_shots = false;
         int m_hide_shots_key = 0;
         int m_hide_shots_key_style = 0;
-        
+
+        // Field of View (rage, degrees)
+        int m_fov = 10;
+
+        // Peek Assist (+ gear: Style / Auto Stop / Retreat Mode / Max Distance)
+        bool m_peek_assist = false;
+        int m_peek_assist_style = 1;         // 0=Static, 1=Gradient, 2=Dynamic
+        int m_peek_assist_auto_stop = 0;     // 0=Select, 1=Early, 2=Full Stop
+        int m_peek_assist_retreat = 1;       // 0=Off, 1=On Shot, 2=On Hurt
+        int m_peek_assist_max_distance = 100; // 0..100 (100 = Inf.)
+
         // Получение конфига для текущего оружия
         weapon_config_t& get_weapon_config(int group) {
             if (group < 0 || group >= WEAPON_GROUP_MAX)
@@ -199,6 +210,12 @@ public:
         int m_yaw_mode = 0;  // 0=off, 1=backward, 2=sideways, 3=spin, 4=at target, 5=custom
         bool m_at_target = false;
         int m_yaw_amount = 0;
+        int m_yaw_jitter = 0;  // UI combo: 0=Disabled, 1=Low, 2=Medium, 3=High
+
+        // ====== MISC (rage anti-aim box) ======
+        bool m_slow_walk = false;
+        bool m_freestanding = false;
+        int m_freestanding_mode = 0;  // 0=Auto, 1=Left, 2=Right
         
         // ====== JITTER ======
         bool m_jitter_enabled = false;

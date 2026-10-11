@@ -358,12 +358,14 @@ void c_menu::draw_rage() {
     static const char* auto_stop_names[] = { "Early", "Full Stop", "Between Shots", "Air", "Duck" };
 
     auto& rage = g_cfg->rage_bot;
+    auto& anti = g_cfg->anti_hit;
     rage.m_selected_group = ImClamp(rage.m_selected_group, 0, WEAPON_GROUP_MAX - 1);
     auto& cfg = rage.m_weapon_config[rage.m_selected_group];
 
-    // Standard rows only - Checkbox / Combo / MultiCombo / Slider, the same widgets the Anti-Aim
-    // tab uses. The options gear goes in the slot left of the control it belongs to, and its card
-    // holds the settings that have no row of their own.
+    // Neverlose layout: left column MAIN + ACCURACY, right column SELECTION + ANTI-AIM. The
+    // options gear sits in the slot left of the control it belongs to; its card holds the
+    // settings that have no row of their own. The group being edited is chosen from the
+    // weapon-group selector in the top bar.
     gui.begin_grid(2);
 
     // ========== LEFT COLUMN ==========
@@ -371,28 +373,50 @@ void c_menu::draw_rage() {
 
     gui.grid_box("MAIN", k_auto_height);
 
-    // The group being edited is chosen from the weapon-group selector in the top bar; its
-    // override state is toggled from that same card. Every row below edits the selected group.
+    // Enabled (gear: Silent / Resolver)
     gui.row_begin();
     if (gui.row_options_begin("##enable_opts", 216.f, c_gui::row_control::toggle)) {
-        gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
-        gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
-        gui.row_checkbox("Backtrack", &cfg.m_backtrack);
+        gui.row_checkbox("Silent", &rage.m_silent);
+        gui.row_checkbox("Resolver", &rage.m_resolver_enabled);
         gui.row_options_end();
     }
-    gui.row_checkbox("Enable", &rage.m_enabled);
+    gui.row_checkbox("Enabled", &rage.m_enabled);
 
-    gui.row_checkbox("Silent", &rage.m_silent);
-    gui.row_checkbox("Penetration", &cfg.m_penetration);
-    gui.row_checkbox("Auto Scope", &cfg.m_auto_scope);
+    // Peek Assist (gear: Style / Auto Stop / Retreat Mode / Max Distance)
+    static const char* peek_style[]    = { "Static", "Gradient", "Dynamic" };
+    static const char* peek_autostop[] = { "Select", "Early", "Full Stop" };
+    static const char* peek_retreat[]  = { "Off", "On Shot", "On Hurt" };
+    gui.row_begin();
+    if (gui.row_options_begin("##peek_opts", 240.f, c_gui::row_control::toggle)) {
+        gui.row_begin(); ImGui::Combo("Style", &rage.m_peek_assist_style, peek_style, IM_ARRAYSIZE(peek_style));
+        gui.row_begin(); ImGui::Combo("Auto Stop", &rage.m_peek_assist_auto_stop, peek_autostop, IM_ARRAYSIZE(peek_autostop));
+        gui.row_begin(); ImGui::Combo("Retreat Mode", &rage.m_peek_assist_retreat, peek_retreat, IM_ARRAYSIZE(peek_retreat));
+        gui.row_begin(); ImGui::SliderInt("Max Distance", &rage.m_peek_assist_max_distance, 0, 100,
+                                          rage.m_peek_assist_max_distance >= 100 ? "Inf." : "%d m");
+        gui.row_options_end();
+    }
+    gui.row_checkbox("Peek Assist", &rage.m_peek_assist);
+
+    // Hide Shots / Double Tap - no gear
+    gui.row_checkbox("Hide Shots", &rage.m_hide_shots);
+    gui.row_checkbox("Double Tap", &rage.m_double_tap);
+
+    gui.row_begin(); ImGui::SliderInt("Field of View", &rage.m_fov, 0, 180, "%d\xc2\xb0");
     gui.end_group_box();
 
-    gui.grid_box("AUTO STOP", k_auto_height);
-    gui.row_checkbox("Auto Stop", &cfg.m_auto_stop);
+    gui.grid_box("ACCURACY", k_auto_height);
 
+    gui.row_checkbox("Auto Scope", &cfg.m_auto_scope);
+
+    // Auto Stop (gear: Modes multibox)
     bool auto_stop_modes[5] = { cfg.m_auto_stop_early, cfg.m_auto_stop_full, cfg.m_auto_stop_between,
                                 cfg.m_auto_stop_air, cfg.m_auto_stop_duck };
-    gui.row_multibox("Modes", auto_stop_names, auto_stop_modes, 5, "Select auto stop modes.");
+    gui.row_begin();
+    if (gui.row_options_begin("##autostop_opts", 216.f, c_gui::row_control::toggle)) {
+        gui.row_multibox("Modes", auto_stop_names, auto_stop_modes, 5, "Select auto stop modes.");
+        gui.row_options_end();
+    }
+    gui.row_checkbox("Auto Stop", &cfg.m_auto_stop);
     cfg.m_auto_stop_early = auto_stop_modes[0];
     cfg.m_auto_stop_full = auto_stop_modes[1];
     cfg.m_auto_stop_between = auto_stop_modes[2];
@@ -403,10 +427,17 @@ void c_menu::draw_rage() {
     // ========== RIGHT COLUMN ==========
     gui.grid_col(1);
 
-    gui.grid_box("SETTINGS", k_auto_height);
+    gui.grid_box("SELECTION", k_auto_height);
 
-    gui.row_multibox("Hitbox", hitbox_names, cfg.m_hitboxes, 6, "Select target hitboxes.");
+    // Hitboxes (gear: Prefer Body Aim)
+    gui.row_begin();
+    if (gui.row_options_begin("##hitbox_opts", 216.f, c_gui::row_control::box)) {
+        gui.row_checkbox("Prefer Body Aim", &cfg.m_prefer_body_aim);
+        gui.row_options_end();
+    }
+    gui.row_multibox("Hitboxes", hitbox_names, cfg.m_hitboxes, 6, "Select target hitboxes.");
 
+    // Multipoint (gear: Head Scale / Body Scale)
     gui.row_begin();
     if (gui.row_options_begin("##multipoint_opts", 216.f, c_gui::row_control::box)) {
         gui.row_begin(); ImGui::SliderInt("Head Scale", &cfg.m_head_scale, 0, 100, "%d%%");
@@ -415,14 +446,59 @@ void c_menu::draw_rage() {
     }
     gui.row_multibox("Multipoint", hitbox_names, cfg.m_multi_points, 6, "Select multipoint locations.");
 
+    // Hit Chance (gear: Hit Chance Seed / Extrapolate / Backtrack)
+    gui.row_begin();
+    if (gui.row_options_begin("##hitchance_opts", 216.f, c_gui::row_control::slider)) {
+        gui.row_begin(); ImGui::SliderInt("Hit Chance Seed", &cfg.m_hit_chance_seed, 0, 256);
+        gui.row_begin(); ImGui::SliderInt("Extrapolate", &cfg.m_extrapolate, 0, 16, "%d ticks");
+        gui.row_checkbox("Backtrack", &cfg.m_backtrack);
+        gui.row_options_end();
+    }
     gui.row_begin(); ImGui::SliderInt("Hit Chance", &cfg.m_hit_chance, 0, 100, "%d%%");
 
+    // Min. Damage (gear: Delay Shot)
     gui.row_begin();
     if (gui.row_options_begin("##mindmg_opts", 216.f, c_gui::row_control::slider)) {
         gui.row_checkbox("Delay Shot", &cfg.m_delay_shot);
         gui.row_options_end();
     }
-    gui.row_begin(); ImGui::SliderInt("Min Damage", &cfg.m_minimum_damage, 0, 120);
+    gui.row_begin(); ImGui::SliderInt("Min. Damage", &cfg.m_minimum_damage, 0, 120);
+
+    gui.row_checkbox("Penetrate Walls", &cfg.m_penetration);
+    gui.end_group_box();
+
+    // ANTI-AIM (moved here from its own tab)
+    gui.grid_box("ANTI-AIM", k_auto_height);
+
+    static const char* pitch_modes[]  = { "Off", "Down", "Up", "Zero", "Custom" };
+    static const char* yaw_modes[]    = { "Off", "Backward", "Sideways", "Spin", "At Target" };
+    static const char* jitter_modes[] = { "Disabled", "Low", "Medium", "High" };
+    static const char* free_modes[]   = { "Auto", "Left", "Right" };
+
+    gui.row_checkbox("Enabled", &anti.m_enabled);
+
+    gui.row_begin(); ImGui::Combo("Pitch", &anti.m_pitch_mode, pitch_modes, IM_ARRAYSIZE(pitch_modes));
+
+    // Yaw (gear: Yaw Add / At Target)
+    gui.row_begin();
+    if (gui.row_options_begin("##yaw_opts", 216.f, c_gui::row_control::box)) {
+        gui.row_begin(); ImGui::SliderInt("Yaw Add", &anti.m_yaw_amount, -180, 180);
+        gui.row_checkbox("At Target", &anti.m_at_target);
+        gui.row_options_end();
+    }
+    gui.row_begin(); ImGui::Combo("Yaw", &anti.m_yaw_mode, yaw_modes, IM_ARRAYSIZE(yaw_modes));
+
+    gui.row_begin(); ImGui::Combo("Yaw Jitter", &anti.m_yaw_jitter, jitter_modes, IM_ARRAYSIZE(jitter_modes));
+
+    gui.row_checkbox("Slow Walk", &anti.m_slow_walk);
+
+    // Freestanding (gear: Mode)
+    gui.row_begin();
+    if (gui.row_options_begin("##freestanding_opts", 216.f, c_gui::row_control::toggle)) {
+        gui.row_begin(); ImGui::Combo("Mode", &anti.m_freestanding_mode, free_modes, IM_ARRAYSIZE(free_modes));
+        gui.row_options_end();
+    }
+    gui.row_checkbox("Freestanding", &anti.m_freestanding);
     gui.end_group_box();
 
     gui.end_grid();
@@ -446,25 +522,6 @@ void c_menu::draw_legit() {
     gui.grid_box("BACKTRACK", k_auto_height);
     gui.row_checkbox("Enabled", &g_cfg->legit_bot.m_backtrack_enabled);
     gui.row_begin(); ImGui::SliderInt("Ticks", &g_cfg->legit_bot.m_backtrack_ticks, 0, 15);
-    gui.end_group_box();
-
-    gui.end_grid();
-}
-
-void c_menu::draw_antiaim() {
-    gui.begin_grid(1);
-
-    gui.grid_col(0);
-    gui.grid_box("ANGLES", k_auto_height);
-    static const char* pitch_modes[] = { "Off", "Down", "Up", "Zero", "Custom" };
-    gui.row_begin(); ImGui::Combo("Pitch", &g_cfg->anti_hit.m_pitch_mode, pitch_modes, IM_ARRAYSIZE(pitch_modes));
-    draw_animated_row("##custom_pitch", g_cfg->anti_hit.m_pitch_mode == 4, [] {
-        ImGui::SliderInt("Pitch Amount", &g_cfg->anti_hit.m_pitch_amount, -89, 89);
-    });
-    static const char* yaw_modes[] = { "Off", "Backward", "Sideways", "Spin", "At Target" };
-    gui.row_begin(); ImGui::Combo("Yaw", &g_cfg->anti_hit.m_yaw_mode, yaw_modes, IM_ARRAYSIZE(yaw_modes));
-    gui.row_begin(); ImGui::SliderInt("Yaw Add", &g_cfg->anti_hit.m_yaw_amount, -180, 180);
-    gui.row_checkbox("At Target", &g_cfg->anti_hit.m_at_target);
     gui.end_group_box();
 
     gui.end_grid();
@@ -645,17 +702,16 @@ void c_menu::render() {
         gui.group_title("AIMBOT");
         if (gui.tab(ICON_FA_CROSSHAIRS, "Rage", gui.m_tab == 0)) switch_tab(0);
         if (gui.tab(ICON_FA_MOUSE, "Legit", gui.m_tab == 1)) switch_tab(1);
-        if (gui.tab(ICON_FA_SHIELD_ALT, "Anti-Aim", gui.m_tab == 2)) switch_tab(2);
 
         ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
         gui.group_title("COMMON");
-        if (gui.tab(ICON_FA_IMAGE, "Visuals", gui.m_tab == 3)) switch_tab(3);
-        if (gui.tab(ICON_FA_SLIDERS_H, "Miscellaneous", gui.m_tab == 4)) switch_tab(4);
+        if (gui.tab(ICON_FA_IMAGE, "Visuals", gui.m_tab == 2)) switch_tab(2);
+        if (gui.tab(ICON_FA_SLIDERS_H, "Miscellaneous", gui.m_tab == 3)) switch_tab(3);
 
         ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
         gui.group_title("CUSTOMIZATION");
-        if (gui.tab(ICON_FA_PAINT_BRUSH, "Skins", gui.m_tab == 5)) switch_tab(5);
-        if (gui.tab(ICON_FA_COG, "Config", gui.m_tab == 6)) switch_tab(6);
+        if (gui.tab(ICON_FA_PAINT_BRUSH, "Skins", gui.m_tab == 4)) switch_tab(4);
+        if (gui.tab(ICON_FA_COG, "Config", gui.m_tab == 5)) switch_tab(5);
         ImGui::EndChild();
 
         draw_top_bar(window);
@@ -667,17 +723,16 @@ void c_menu::render() {
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
         static const char* tab_names[] = {
-            "Rage", "Legit", "Anti-Aim", "Visuals", "Miscellaneous", "Skins", "Config"
+            "Rage", "Legit", "Visuals", "Miscellaneous", "Skins", "Config"
         };
         gui.search_scope_begin(gui.m_tab, tab_names[gui.m_tab]);
         switch (gui.m_tab) {
             case 0: draw_rage(); break;
             case 1: draw_legit(); break;
-            case 2: draw_antiaim(); break;
-            case 3: draw_visuals(); break;
-            case 4: draw_misc(); break;
-            case 5: draw_skins(); break;
-            case 6: draw_configs(); break;
+            case 2: draw_visuals(); break;
+            case 3: draw_misc(); break;
+            case 4: draw_skins(); break;
+            case 5: draw_configs(); break;
             default: switch_tab(0); break;
         }
         gui.search_scope_end();

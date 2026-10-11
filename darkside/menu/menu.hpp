@@ -21,7 +21,6 @@ public:
 private:
     void draw_rage();
     void draw_legit();
-    void draw_antiaim();
     void draw_visuals();
     void draw_misc();
     void draw_skins();
