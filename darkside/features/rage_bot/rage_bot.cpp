@@ -524,37 +524,73 @@ bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_
 	const auto* local = g_prediction->get_local_data();
 	if (!local)
 		return true;
-	vec3_t to_us = local->m_eye_pos - world;
-	vec3_t aim = g_math->aim_direction(world, local->m_eye_pos);
-	vec3_t forward, right, up;
-	g_math->angle_vectors(aim, forward, right, up);
-	(void)to_us;
 
-	auto push = [&](const vec3_t& offset) {
-		points.emplace_back(world + offset, hitbox, false);
+	// Camera basis: +forward is the surface facing the player. That is the
+	// point you can actually shoot (back of the head on a turned/crouched bot),
+	// not a far-side offset that only exists to satisfy the scan.
+	vec3_t to_cam{
+		local->m_eye_pos.x - world.x,
+		local->m_eye_pos.y - world.y,
+		local->m_eye_pos.z - world.z
+	};
+	const float to_len = std::sqrt(to_cam.x * to_cam.x + to_cam.y * to_cam.y + to_cam.z * to_cam.z);
+	if (to_len < 1.f)
+		return true;
+	vec3_t forward{ to_cam.x / to_len, to_cam.y / to_len, to_cam.z / to_len };
+	vec3_t world_up{ 0.f, 0.f, 1.f };
+	vec3_t right{
+		world_up.y * forward.z - world_up.z * forward.y,
+		world_up.z * forward.x - world_up.x * forward.z,
+		world_up.x * forward.y - world_up.y * forward.x
+	};
+	float right_len = std::sqrt(right.x * right.x + right.y * right.y + right.z * right.z);
+	if (right_len < 0.01f) {
+		right = { 1.f, 0.f, 0.f };
+		right_len = 1.f;
+	}
+	right.x /= right_len; right.y /= right_len; right.z /= right_len;
+	vec3_t up{
+		right.y * forward.z - right.z * forward.y,
+		right.z * forward.x - right.x * forward.z,
+		right.x * forward.y - right.y * forward.x
 	};
 
+	auto push = [&](float fx, float rx, float ux) {
+		points.emplace_back(vec3_t{
+			world.x + forward.x * fx + right.x * rx + up.x * ux,
+			world.y + forward.y * fx + right.y * rx + up.y * ux,
+			world.z + forward.z * fx + right.z * rx + up.z * ux
+		}, hitbox, false);
+	};
+
+	// Near face first: crouched occiput / exposed shell at scale 100.
+	push(radius, 0.f, 0.f);
+	push(radius * 0.72f, 0.f, radius * 0.62f);
+	push(radius * 0.55f, 0.f, radius * 0.9f);
+	push(radius * 0.7f, radius * 0.62f, radius * 0.25f);
+	push(radius * 0.7f, -radius * 0.62f, radius * 0.25f);
+	push(radius * 0.45f, radius * 0.85f, 0.f);
+	push(radius * 0.45f, -radius * 0.85f, 0.f);
 	if (hitbox == HITBOX_HEAD) {
-		push(up * radius);
-		push((up - forward).normalize() * radius);
-		push(right * radius);
-		push(right * -radius);
-		push((up + right).normalize() * radius * 0.85f);
-		push((up - right).normalize() * radius * 0.85f);
+		push(radius * 0.8f, 0.f, -radius * 0.35f);
 		return true;
 	}
 
-	push(right * radius);
-	push(right * -radius);
-	if (menu == 1 || menu == 2) {
-		push(up * radius * 0.65f);
-		push(up * -radius * 0.45f);
-	}
+	if (menu == 1 || menu == 2)
+		push(radius * 0.65f, 0.f, -radius * 0.4f);
 	vec3_t cap_a{}, cap_b{};
 	g_math->vector_transform(data.m_mins, data.m_matrix, cap_a);
 	g_math->vector_transform(data.m_maxs, data.m_matrix, cap_b);
-	points.emplace_back(cap_a, hitbox, false);
-	points.emplace_back(cap_b, hitbox, false);
+	auto toward_cam = [&](const vec3_t& end) {
+		const float dx = end.x - world.x;
+		const float dy = end.y - world.y;
+		const float dz = end.z - world.z;
+		return dx * forward.x + dy * forward.y + dz * forward.z > 0.f;
+	};
+	if (toward_cam(cap_a))
+		points.emplace_back(cap_a, hitbox, false);
+	if (toward_cam(cap_b))
+		points.emplace_back(cap_b, hitbox, false);
 	return true;
 }
 
@@ -648,8 +684,28 @@ int scan_rank(int hitbox) {
 	}
 }
 
-bool better_shot(int hitbox, float damage, bool center, int best_hitbox, float best_damage, bool best_center,
-	int health, bool prefer_body) {
+float aim_margin(const vec3_t& eye, const vec3_t& point, const vec3_t& cap_a, const vec3_t& cap_b, float radius,
+	float inaccuracy, float spread) {
+	const vec3_t center{
+		(cap_a.x + cap_b.x) * 0.5f,
+		(cap_a.y + cap_b.y) * 0.5f,
+		(cap_a.z + cap_b.z) * 0.5f
+	};
+	const float pdx = point.x - eye.x, pdy = point.y - eye.y, pdz = point.z - eye.z;
+	const float cdx = center.x - eye.x, cdy = center.y - eye.y, cdz = center.z - eye.z;
+	const float dp = std::sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
+	const float dc = std::sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
+	if (dp < 1.f || dc < 1.f)
+		return 0.f;
+	const float cosang = clampf((pdx * cdx + pdy * cdy + pdz * cdz) / (dp * dc), -1.f, 1.f);
+	const float ang = std::acos(cosang);
+	const float ang_radius = std::asin(clampf(radius / dc, 0.f, 1.f));
+	const float cone = (std::max)(inaccuracy + spread, 0.0002f);
+	return (ang_radius - ang) / cone;
+}
+
+bool better_shot(int hitbox, float damage, bool center, float margin, int best_hitbox, float best_damage, bool best_center,
+	float best_margin, int health, bool prefer_body) {
 	if (best_hitbox < 0)
 		return true;
 	const bool body = hitbox != HITBOX_HEAD;
@@ -662,6 +718,12 @@ bool better_shot(int hitbox, float damage, bool center, int best_hitbox, float b
 		return rank < best_rank;
 	if (body && best_body && lethal && best_lethal && scan_rank(hitbox) != scan_rank(best_hitbox))
 		return scan_rank(hitbox) < scan_rank(best_hitbox);
+	// A multipoint on the exposed shell that the cone can cover beats a center
+	// we can only graze. Otherwise 100% points never get shot.
+	if (margin > best_margin + 0.2f)
+		return true;
+	if (best_margin > margin + 0.2f)
+		return false;
 	if (center != best_center)
 		return center;
 	return damage > best_damage + 0.05f;
@@ -908,6 +970,7 @@ aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float
 	}
 
 	float best_damage = 0.f;
+	float best_margin = -100.f;
 	bool lethal_body = false;
 
 	record->apply(record->m_pawn);
@@ -949,10 +1012,14 @@ aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float
 
 			point.m_damage = dealt;
 			point.m_penetrated = pen.m_penetrated;
-			if (!better_shot(hitbox, dealt, point.m_center, best.m_hitbox, best_damage, best.m_center, health, prefer_body))
+			const float margin = caps[hitbox].m_valid
+				? aim_margin(eye, point.m_point, caps[hitbox].m_a, caps[hitbox].m_b, caps[hitbox].m_radius, inaccuracy, spread)
+				: 0.f;
+			if (!better_shot(hitbox, dealt, point.m_center, margin, best.m_hitbox, best_damage, best.m_center, best_margin, health, prefer_body))
 				continue;
 			best = point;
 			best_damage = dealt;
+			best_margin = margin;
 			if (hitbox != HITBOX_HEAD && dealt >= static_cast<float>(health))
 				lethal_body = true;
 		}
@@ -1121,24 +1188,40 @@ int c_rage_bot::hitchance(const vec3_t& eye, const vec3_t& angles, lag_record_t*
 
 	auto* weapon_data = weapon->get_weapon_data();
 	const float range = weapon_data && weapon_data->m_range() > 1.f ? weapon_data->m_range() : 8192.f;
-	const int need = static_cast<int>(std::ceil(static_cast<float>(required) / 100.f * static_cast<float>(samples)));
-
 	int hits = 0;
+	int tested = 0;
 	for (int seed = 0; seed < samples; ++seed) {
 		float sx = 0.f, sy = 0.f;
 		if (!game_spread(weapon, seed, inaccuracy, spread, sx, sy))
 			continue;
-		vec3_t direction = (forward + right * sx + up * sy).normalize();
-		if (ray_capsule(eye, direction, cap_a, cap_b, data.m_radius, range))
+		vec3_t direction{
+			forward.x + right.x * sx + up.x * sy,
+			forward.y + right.y * sx + up.y * sy,
+			forward.z + right.z * sx + up.z * sy
+		};
+		const float dir_len = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+		if (dir_len < 0.001f)
+			continue;
+		direction.x /= dir_len; direction.y /= dir_len; direction.z /= dir_len;
+		const float entry = capsule_enter(eye, direction, cap_a, cap_b, data.m_radius, range);
+		++tested;
+		if (entry >= 0.f)
 			++hits;
 
-		const int remaining = samples - (seed + 1);
-		if (hits >= need && hits * 100 / samples >= required)
-			break;
-		if (hits + remaining < need)
-			break;
+		// Percent is hits/tested, never hits/total-after-an-early-abort.
+		// Aborting and dividing by the full sample count turned a 70% shot into ~40.
+		if (tested >= 32 && tested >= samples / 2) {
+			const int pct = hits * 100 / tested;
+			if (pct >= required)
+				return std::clamp(pct, 0, 100);
+			const int possible = (hits + (samples - tested)) * 100 / samples;
+			if (possible < required)
+				return std::clamp(pct, 0, 100);
+		}
 	}
-	return std::clamp(static_cast<int>((static_cast<float>(hits) / static_cast<float>(samples)) * 100.f), 0, 100);
+	if (tested <= 0)
+		return 0;
+	return std::clamp(hits * 100 / tested, 0, 100);
 }
 
 float c_rage_bot::required_hitchance(int configured, float inaccuracy, float spread, float distance, float radius,
