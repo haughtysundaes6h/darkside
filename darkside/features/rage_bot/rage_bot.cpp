@@ -1,6 +1,7 @@
 #include "rage_bot.hpp"
 #include "../../entity_system/entity.hpp"
 #include "../movement/movement.hpp"
+#include "../protobufs/protobufs.hpp"
 #include "../../render/render.hpp"
 
 #include <cfloat>
@@ -167,7 +168,7 @@ float c_rage_bot::quick_score_record(lag_record_t* record, vec3_t shoot_pos, boo
 
 lag_record_t* c_rage_bot::select_record(int handle, int min_damage)
 {
-	if (!g_ctx->m_local_pawn || !g_ctx->m_local_pawn->is_alive())
+	if (!g_ctx->m_local_pawn->is_alive())
 		return nullptr;
 
 	auto records_it = m_lag_records.find(handle);
@@ -180,7 +181,7 @@ lag_record_t* c_rage_bot::select_record(int handle, int min_damage)
 
 	auto& weapon_cfg = get_current_weapon_config();
 	const bool backtrack = weapon_cfg.m_backtrack;
-	int scan_depth = backtrack ? std::clamp(weapon_cfg.m_extrapolate, 0, 64) : 1;
+	int scan_depth = backtrack ? std::clamp(weapon_cfg.m_backtrack_ticks, 0, 64) : 1;
 	if (scan_depth == 0)
 		scan_depth = static_cast<int>(records.size());
 
@@ -235,7 +236,7 @@ lag_record_t* c_rage_bot::select_record(int handle, int min_damage)
 void c_rage_bot::find_targets()
 {
 	m_aim_targets.clear();
-	if (!g_ctx->m_local_pawn || !g_ctx->m_local_pawn->is_alive())
+	if (!g_ctx->m_local_pawn->is_alive())
 		return;
 
 	auto entities = g_entity_system->get("CCSPlayerController");
@@ -433,7 +434,7 @@ aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage)
 {
 	aim_point_t best_point{ vec3_t(0.f, 0.f, 0.f), -1 };
 
-	if (!g_ctx->m_local_pawn || !g_ctx->m_local_pawn->is_alive())
+	if (!g_ctx->m_local_pawn->is_alive())
 		return best_point;
 
 	if (!record->m_pawn || !record->m_pawn->is_alive())
@@ -550,7 +551,7 @@ aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage)
 
 void c_rage_bot::select_target()
 {
-	if (!g_ctx->m_local_pawn || !g_ctx->m_local_pawn->is_alive())
+	if (!g_ctx->m_local_pawn->is_alive())
 		return;
 
 	if (m_aim_targets.empty())
@@ -777,7 +778,7 @@ vec3_t c_rage_bot::calculate_spread_angles(vec3_t angle, int random_seed, float 
 
 int c_rage_bot::calculate_hit_chance(c_cs_player_pawn* pawn, vec3_t angles, c_base_player_weapon* active_weapon, c_cs_weapon_base_v_data* weapon_data, bool no_spread)
 {
-	if (!g_ctx->m_local_pawn || !g_ctx->m_local_pawn->is_alive())
+	if (!g_ctx->m_local_pawn->is_alive())
 		return 0;
 
 	if (!pawn)
@@ -907,6 +908,83 @@ void c_rage_bot::process_attack(c_user_cmd* user_cmd, vec3_t angle)
 }
 
 // ============================================================================
+// DOUBLE TAP / HIDE SHOTS (CS2 subtick)
+// ============================================================================
+
+void c_rage_bot::strip_attack(c_user_cmd* user_cmd)
+{
+	auto& buttons = user_cmd->m_button_state;
+	buttons.m_button_state &= ~IN_ATTACK;
+	buttons.m_button_state2 &= ~IN_ATTACK;
+	buttons.m_button_state3 &= ~IN_ATTACK;
+
+	if (!user_cmd->pb.has_base())
+		return;
+
+	auto* base = user_cmd->pb.mutable_base();
+	for (int i = 0; i < base->subtick_moves_size(); ++i) {
+		auto* step = base->mutable_subtick_moves(i);
+		if (step && (step->button() & IN_ATTACK)) {
+			step->set_button(step->button() & ~IN_ATTACK);
+			if (!step->button())
+				step->clear_pressed();
+		}
+	}
+}
+
+void c_rage_bot::process_exploit_attack(c_user_cmd* user_cmd, vec3_t angle, bool dt_active, bool hs_active, bool want_shoot)
+{
+	auto* weapon = g_ctx->m_local_pawn ? g_ctx->m_local_pawn->get_active_weapon() : nullptr;
+	if (!weapon || !user_cmd->pb.has_base())
+		return;
+
+	const int tick_base = g_ctx->m_local_controller->m_tick_base();
+	const int next_attack_tick = weapon->m_next_primary_attack();
+	const bool ready = (next_attack_tick <= tick_base) && (weapon->m_clip1() > 0);
+
+	bool should_attack = want_shoot && ready;
+	if (dt_active)
+		should_attack = should_attack && !m_dt_fired;
+
+	for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
+		auto* entry = user_cmd->pb.mutable_input_history(i);
+		if (entry)
+			entry->set_player_tick_count(should_attack ? next_attack_tick : 0);
+	}
+
+	if (should_attack) {
+		auto* base = user_cmd->pb.mutable_base();
+		if (base->subtick_moves_size() < 64) {
+			auto allocate = [&]() { return g_protobuf->add_subtick_move_step(user_cmd); };
+
+			const auto make_step = [&](bool pressed, float when) -> CSubtickMoveStep* {
+				auto* step = allocate();
+				if (!step)
+					return nullptr;
+				step->set_button(IN_ATTACK);
+				step->set_pressed(pressed);
+				step->set_when(when);
+				step->clear_analog_forward_delta();
+				step->clear_analog_left_delta();
+				step->clear_pitch_delta();
+				step->clear_yaw_delta();
+				return step;
+			};
+
+			make_step(true, 0.0f);
+			make_step(false, 0.999f);
+		}
+	}
+	else {
+		strip_attack(user_cmd);
+	}
+
+	m_dt_fired = dt_active && should_attack && !m_dt_fired;
+
+	user_cmd->pb.set_attack1_start_history_index(-1);
+}
+
+// ============================================================================
 // ON CREATE MOVE
 // ============================================================================
 
@@ -1015,30 +1093,56 @@ void c_rage_bot::on_create_move()
 
 	m_active_record.reset(m_active_record.m_pawn);
 
-	// Порог хитшанса (-1 = Auto)
 	float required_hc = weapon_cfg.m_hit_chance < 0
 		? 0.f
 		: static_cast<float>(is_taser ? 70 : weapon_cfg.m_hit_chance);
 
-	// Delay Shot
 	if (weapon_cfg.m_delay_shot && hit_chance < 100
 		&& m_best_target->m_best_point->m_damage < static_cast<float>(m_best_target->m_pawn->m_health())) {
 		required_hc = (std::min)(required_hc + 25.f, 100.f);
 	}
 
-	if (static_cast<float>(hit_chance) >= required_hc) {
-		for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
-			auto tick = user_cmd->pb.mutable_input_history(i);
-			if (tick) {
-				tick->mutable_view_angles()->set_x(best_angle.x);
-				tick->mutable_view_angles()->set_y(best_angle.y);
-				tick->mutable_view_angles()->set_z(best_angle.z);
+	// DT / HS: тумблер + кейбинд
+	const bool dt_active = g_cfg->rage_bot.m_double_tap
+		&& g_key_handler->is_pressed(g_cfg->rage_bot.m_double_tap_key, g_cfg->rage_bot.m_double_tap_key_style);
+	const bool hs_active = g_cfg->rage_bot.m_hide_shots
+		&& g_key_handler->is_pressed(g_cfg->rage_bot.m_hide_shots_key, g_cfg->rage_bot.m_hide_shots_key_style);
+
+	const bool want_shoot = static_cast<float>(hit_chance) >= required_hc;
+
+	if (dt_active || hs_active) {
+		if (want_shoot) {
+			for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
+				auto tick = user_cmd->pb.mutable_input_history(i);
+				if (tick) {
+					tick->mutable_view_angles()->set_x(best_angle.x);
+					tick->mutable_view_angles()->set_y(best_angle.y);
+					tick->mutable_view_angles()->set_z(best_angle.z);
+				}
 			}
+
+			if (!g_cfg->rage_bot.m_silent)
+				g_interfaces->m_csgo_input->set_view_angles(best_angle);
 		}
 
-		if (!g_cfg->rage_bot.m_silent)
-			g_interfaces->m_csgo_input->set_view_angles(best_angle);
-
-		process_attack(user_cmd, best_angle);
+		process_exploit_attack(user_cmd, best_angle, dt_active, hs_active, want_shoot);
+		return;
 	}
+
+	if (!want_shoot)
+		return;
+
+	for (int i = 0; i < user_cmd->pb.input_history_size(); i++) {
+		auto tick = user_cmd->pb.mutable_input_history(i);
+		if (tick) {
+			tick->mutable_view_angles()->set_x(best_angle.x);
+			tick->mutable_view_angles()->set_y(best_angle.y);
+			tick->mutable_view_angles()->set_z(best_angle.z);
+		}
+	}
+
+	if (!g_cfg->rage_bot.m_silent)
+		g_interfaces->m_csgo_input->set_view_angles(best_angle);
+
+	process_attack(user_cmd, best_angle);
 }

@@ -195,42 +195,21 @@ void c_anti_hit::handle_yaw(c_user_cmd* user_cmd) {
 float c_anti_hit::get_base_yaw(c_user_cmd* user_cmd) {
     float yaw = g_interfaces->m_csgo_input->get_view_angles().y;
 
-    // At Target - смотрим на ближайшего врага
-    if (g_cfg->anti_hit.m_at_target) {
-        float at_target_yaw = get_at_target_yaw();
-        if (std::isfinite(at_target_yaw)) {
-            yaw = at_target_yaw;
-        }
-    }
-
     switch (g_cfg->anti_hit.m_yaw_mode) {
-        case 0: // Off
+        case 0: // Off — без AA
             break;
 
-        case 1: // Backward
+        case 1: // Local View — спиной к камере (backward)
             yaw += 180.0f;
             break;
 
-        case 2: // Sideways
-            yaw += 90.0f * m_side;
-            break;
-
-        case 3: // Spin — детерминированный, ~768°/с на 64 тик
-        {
-            yaw = static_cast<float>((user_cmd->m_command_number * 12) % 360);
-            break;
-        }
-
-        case 4: // At Target force — жёстко спиной к ближайшему врагу
+        case 2: // At Target — спиной к ближайшему врагу
         {
             const float at_yaw = get_at_target_yaw();
             if (std::isfinite(at_yaw))
                 yaw = at_yaw + 180.0f;
             break;
         }
-
-        case 5: // Custom - только yaw add
-            break;
     }
 
     return yaw;
@@ -280,43 +259,47 @@ float c_anti_hit::apply_yaw_jitter(float yaw, int command_number) {
     if (mode <= 0)
         return yaw;
 
-    // Используем jitter_amount из конфига, если есть, иначе дефолтный
-    const float amount = (g_cfg->anti_hit.m_jitter_amount > 0) 
-        ? static_cast<float>(g_cfg->anti_hit.m_jitter_amount) 
-        : 45.0f;
+    // Jitter Range из слайдера (0-90°)
+    const float amount = static_cast<float>(g_cfg->anti_hit.m_jitter_amount);
+    if (amount <= 0.f)
+        return yaw;
 
     switch (mode) {
-        case 1: // Offset — чередование влево/вправо
+        case 1: // Offset — чередование между yaw и yaw+offset
         {
+            // тик 0: yaw (без изменений), тик 1: yaw + offset
             const bool flip = (command_number % 2) != 0;
-            yaw += flip ? amount : -amount;
-            break;
-        }
-
-        case 2: // Center — лево / центр / право
-        {
-            const int phase = command_number % 3;
-            if (phase == 0)
-                yaw -= amount;
-            else if (phase == 1)
-                yaw += 0.0f; // центр
-            else
+            if (flip)
                 yaw += amount;
             break;
         }
 
-        case 3: // 3-Way — три фиксированные позиции (-60°, 0°, +60°)
+        case 2: // Center — от -amount до +amount относительно yaw
         {
+            // 3 фазы: -amount, 0 (центр), +amount
             const int phase = command_number % 3;
-            constexpr float offsets[3] = { -60.0f, 0.0f, 60.0f };
+            if (phase == 0)
+                yaw -= amount;
+            else if (phase == 2)
+                yaw += amount;
+            // phase == 1 — центр, yaw без изменений
+            break;
+        }
+
+        case 3: // 3-Way — три позиции с амплитудой amount
+        {
+            // -amount, 0, +amount
+            const int phase = command_number % 3;
+            const float offsets[3] = { -amount, 0.0f, amount };
             yaw += offsets[phase];
             break;
         }
 
-        case 4: // 5-Way — пять фиксированных позиций (-90°, -45°, 0°, +45°, +90°)
+        case 4: // 5-Way — пять позиций с амплитудой amount
         {
+            // -amount, -amount/2, 0, +amount/2, +amount
             const int phase = command_number % 5;
-            constexpr float offsets[5] = { -90.0f, -45.0f, 0.0f, 45.0f, 90.0f };
+            const float offsets[5] = { -amount, -amount * 0.5f, 0.0f, amount * 0.5f, amount };
             yaw += offsets[phase];
             break;
         }

@@ -474,22 +474,27 @@ void c_menu::draw_rage() {
     gui.grid_box("ANTI-AIM", k_auto_height);
 
     static const char* pitch_modes[]  = { "Off", "Down", "Up", "Zero", "Custom" };
-    static const char* yaw_modes[]    = { "Off", "Backward", "Sideways", "Spin", "At Target" };
+    static const char* yaw_modes[]    = { "Off", "Local View", "At Target" };
     static const char* jitter_modes[] = { "Disabled", "Offset", "Center", "3-Way", "5-Way" };
 
     gui.row_checkbox("Enabled", &anti.m_enabled);
 
     gui.row_begin(); ImGui::Combo("Pitch", &anti.m_pitch_mode, pitch_modes, IM_ARRAYSIZE(pitch_modes));
 
-    // Yaw (gear: Yaw Add / At Target)
+    // Yaw (gear: Yaw Add)
     gui.row_begin();
     if (gui.row_options_begin("##yaw_opts", 250.f, c_gui::row_control::box)) {
         gui.row_begin(); ImGui::SliderInt("Yaw Add", &anti.m_yaw_amount, -180, 180);
-        gui.row_checkbox("At Target", &anti.m_at_target);
         gui.row_options_end();
     }
     gui.row_begin(); ImGui::Combo("Yaw", &anti.m_yaw_mode, yaw_modes, IM_ARRAYSIZE(yaw_modes));
 
+    // Yaw Jitter (gear: Jitter Amount для offset/center/3-way/5-way)
+    gui.row_begin();
+    if (gui.row_options_begin("##jitter_opts", 250.f, c_gui::row_control::box)) {
+        gui.row_begin(); ImGui::SliderInt("Jitter Range", &anti.m_jitter_amount, 0, 90);
+        gui.row_options_end();
+    }
     gui.row_begin(); ImGui::Combo("Yaw Jitter", &anti.m_yaw_jitter, jitter_modes, IM_ARRAYSIZE(jitter_modes));
 
     // Slow Walk с слайдером скорости

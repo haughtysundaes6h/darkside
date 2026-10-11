@@ -97,6 +97,7 @@ public:
         int m_hit_chance_seed = 0;  // 0-256
         int m_extrapolate = 0;  // 0-16 ticks
         bool m_backtrack = false;
+        int m_backtrack_ticks = 12;  // 0-64 ticks (0 = all unlag window)
         int m_minimum_damage = 20;  // -1 = Auto
         bool m_delay_shot = false;
         

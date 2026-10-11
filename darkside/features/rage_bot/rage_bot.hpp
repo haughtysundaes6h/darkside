@@ -221,6 +221,9 @@ class c_rage_bot
 	// Направление взгляда для FOV-фильтра (заполняется в select_target)
 	vec3_t m_fov_dir{};
 
+	// Состояние DT-цикла: true = этот тик discharge (пропускаем выстрел)
+	bool m_dt_fired{};
+
 	int get_hitbox_from_menu(int hitbox)
 	{
 		switch (hitbox) {
@@ -337,6 +340,12 @@ class c_rage_bot
 	bool can_shoot(c_cs_player_pawn* pawn, c_base_player_weapon* active_weapon);
 	void process_attack(c_user_cmd* user_cmd, vec3_t angle);
 
+	// ========================================================================
+	// EXPLOITS: double tap / hide shots (CS2 subtick)
+	// ========================================================================
+	void process_exploit_attack(c_user_cmd* user_cmd, vec3_t angle, bool dt_active, bool hs_active, bool want_shoot);
+	static void strip_attack(c_user_cmd* user_cmd);
+
 	// Get weapon config based on current weapon
 	c_config_system::weapon_config_t& get_current_weapon_config() {
 		if (!g_ctx->m_local_pawn)
@@ -363,4 +372,4 @@ public:
 	void on_create_move();
 };
 
-const auto g_rage_bot = std::make_unique<c_rage_bot>( );
+const auto g_rage_bot = std::make_unique<c_rage_bot>();
