@@ -2,12 +2,22 @@
 
 #include "../protobufs/protobufs.hpp"
 #include "movement_math.hpp"
-#include "../rage_bot/rage_bot.hpp"
 
 // ============================================================================
 // CS2 MOVEMENT SYSTEM v2.1
 // Subtick-based movement for Counter-Strike 2
 // ============================================================================
+
+// Режимы автостопа из меню rage-бота (per-weapon config).
+struct auto_stop_options_t {
+    bool m_enabled{};        // мастер-тумблер Auto Stop
+    bool m_early{};          // Early: тормоз до 34% max speed (порог точности)
+    bool m_full{};           // Full Stop: полный контр-страйф до ~0
+    bool m_between{};        // Between Shots: тормоз только в окне между выстрелами (окно считает rage_bot)
+    bool m_air{};            // Air: работать и в воздухе
+    bool m_duck{};           // Duck: приседать при остановке
+    bool m_no_spread{};      // weapon_accuracy_nospread — автостоп не нужен
+};
 
 class c_movement {
 private:
@@ -26,6 +36,9 @@ private:
     // Edge detection
     int m_ground_ticks = 0;
     bool m_edge_jump_triggered = false;
+
+    // Bhop: release-переход в воздухе уже сделан (кнопка "отжата" для сервера)
+    bool m_bhop_release_done = false;
     
 public:
     // ========================================================================
@@ -42,6 +55,11 @@ public:
     // CS2 AUTO STRAFE
     // ========================================================================
     void auto_strafe(c_user_cmd* user_cmd, float previous_yaw);
+
+    // ========================================================================
+    // CS2 SUBTICK STRAFE (per-subtick air acceleration, до 12 шагов на тик)
+    // ========================================================================
+    void subtick_strafe(c_user_cmd* user_cmd, c_cs_player_pawn* pawn, float previous_yaw);
     
     // ========================================================================
     // MOVEMENT FIX (для silent aim и AA)

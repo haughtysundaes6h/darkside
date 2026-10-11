@@ -74,43 +74,152 @@ void c_movement::on_create_move(c_user_cmd* user_cmd) {
 bool c_movement::bunnyhop(c_user_cmd* user_cmd, bool jump_held) {
     if (!user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
         return false;
-    
-    // Если прыжок не нажат - ничего не делаем
-    if (!jump_held)
-        return false;
-    
+
     auto* pawn = g_ctx->m_local_pawn;
     if (!pawn->is_alive() || pawn->m_actual_move_type() != movetype_walk)
         return false;
-    
+
     // В воде не работает
     if (pawn->m_flags() & (FL_INWATER | FL_WATERJUMP))
         return false;
-    
-    // Получаем landing prediction от CS2 engine
-    auto landing = g_prediction->landing(pawn, user_cmd);
-    
-    // Проверяем на земле ли мы
-    const bool grounded = landing.valid ? landing.grounded : (pawn->m_flags() & FL_ONGROUND) != 0;
-    
-    // Функция для создания subtick шага
-    auto allocate = [&]() { 
-        return g_protobuf->add_subtick_move_step(user_cmd); 
-    };
-    
-    // Если скоро приземлимся - делаем subtick прыжок на момент приземления
-    if (!grounded && landing.will_land && landing.fraction > 0.0f && landing.fraction < 1.0f) {
-        // Landing jump - прыжок на фракции приземления
-        return command_movement::landing_jump(*user_cmd, landing.fraction, allocate);
+
+    // Защита от двойного вызова: бхоп дергается и из хука, и из
+    // on_create_move — обрабатываем один номер команды один раз
+    static int last_bhop_command = -1;
+    const bool already_processed = (user_cmd->m_command_number == last_bhop_command);
+    last_bhop_command = user_cmd->m_command_number;
+
+    // Кнопка не зажата — физические прыжки движок обработает сам
+    if (!jump_held) {
+        m_bhop_release_done = false;
+        return false;
     }
-    
-    // Стандартный прыжок если на земле
-    return command_movement::set_jump(*user_cmd, grounded, 0.0f, allocate);
+
+    auto* base = user_cmd->pb.mutable_base();
+    auto allocate = [&]() {
+        return g_protobuf->add_subtick_move_step(user_cmd);
+    };
+
+    auto landing = g_prediction->landing(pawn, user_cmd);
+    const bool grounded = landing.valid ? landing.grounded : (pawn->m_flags() & FL_ONGROUND) != 0;
+
+    auto& buttons = user_cmd->m_button_state;
+
+    auto make_step = [&](bool press, float when) -> CSubtickMoveStep* {
+        if (already_processed)
+            return nullptr;
+        auto* step = allocate();
+        if (!step)
+            return nullptr;
+        step->set_button(IN_JUMP);
+        step->set_pressed(press);
+        step->set_when(when);
+        step->clear_analog_forward_delta();
+        step->clear_analog_left_delta();
+        step->clear_pitch_delta();
+        step->clear_yaw_delta();
+        return step;
+    };
+
+    auto find_jump_step = [&](bool press) -> CSubtickMoveStep* {
+        for (int i = 0; i < base->subtick_moves_size(); ++i) {
+            auto* step = base->mutable_subtick_moves(i);
+            if (step && step->button() == IN_JUMP && step->pressed() == press)
+                return step;
+        }
+        return nullptr;
+    };
+
+    if (grounded) {
+        // === ПРЫЖОК ===
+        // В воздухе мы сняли IN_JUMP с кнопок, поэтому у сервера
+        // last_buttons без джампа и наш press — НОВЫЙ переход. Без этого
+        // зажатая со прошлого прыжка кнопка не даёт перехода и прыжок
+        // молчит (именно поэтому старый вариант не работал со второго хопа).
+        if (!find_jump_step(true))
+            make_step(true, 0.0f);
+
+        buttons.m_button_state |= IN_JUMP;      // состояние на конец тика
+        buttons.m_button_state2 |= IN_JUMP;     // был press в этом тике
+        buttons.m_button_state3 &= ~IN_JUMP;
+
+        m_bhop_release_done = false;
+        return true;
+    }
+
+    // === ВОЗДУХ ===
+    // Готовим свежий press к следующему приземлению: сервер НЕ должен
+    // видеть IN_JUMP в last_buttons. Стираем биты; в тике реального
+    // перехода вниз ставим release-степ, чтобы ни один путь сервера не
+    // считал кнопку зажатой.
+    const bool had_jump = (buttons.m_button_state & IN_JUMP) != 0;
+    buttons.m_button_state &= ~IN_JUMP;
+    buttons.m_button_state2 &= ~IN_JUMP;
+    if (had_jump)
+        buttons.m_button_state3 |= IN_JUMP;     // release в этом тике
+    else
+        buttons.m_button_state3 &= ~IN_JUMP;
+
+    if (had_jump || !m_bhop_release_done) {
+        if (!find_jump_step(false))
+            make_step(false, 0.0f);
+        m_bhop_release_done = true;
+    }
+
+    // Landing predict: если коснёмся земли в середине тика — жмём прыжок
+    // прямо на фракции приземления, не теряя тик на границе.
+    if (landing.valid && landing.will_land && landing.fraction > 0.0f && landing.fraction < 1.0f) {
+        if (!find_jump_step(true))
+            make_step(true, landing.fraction);
+
+        // Пресс на фракции остаётся зажатым до конца тика; state3 поднят
+        // только если release случился в этом же тике
+        buttons.m_button_state |= IN_JUMP;
+        buttons.m_button_state2 |= IN_JUMP;
+        return true;
+    }
+
+    return true;
 }
 
 // ============================================================================
 // CS2 AUTO STRAFE
 // ============================================================================
+
+// Один шаг source-подобного airaccelerate для предикта скорости.
+// wish_dir_world уже в мировых координатах; возвращает реальный прирост.
+static float air_accel_step(vec3_t& velocity, const vec3_t& wish_dir_world,
+                            float air_max_wishspeed, float air_accel,
+                            float frame_time, float surface_friction)
+{
+    const float wish_len = wish_dir_world.length();
+    if (wish_len <= 0.001f)
+        return 0.f;
+
+    // CS2: в воздухе wishspeed капится sv_air_max_wishspeed (30)
+    const float wish_speed = (std::min)(wish_len, air_max_wishspeed);
+    const vec3_t dir = wish_dir_world / wish_len;
+
+    const float current_speed = velocity.dot(dir);
+    const float adds = wish_speed - current_speed;
+    if (adds <= 0.f)
+        return 0.f;
+
+    const float accelspeed = (std::min)(air_accel * frame_time * surface_friction * wish_speed, adds);
+    velocity = velocity + dir * accelspeed;
+    return accelspeed;
+}
+
+// Лучший борт стрейфа по предикту прироста (запускает air_accel_step на
+// копии веля). side: +1 = left, -1 = right.
+static float best_side_gain(vec3_t velocity, float yaw, float side,
+                            float air_max_wishspeed, float air_accel,
+                            float frame_time, float surface_friction)
+{
+    const auto wish_in = movement_math::rotate({0.f, side}, 0.f, yaw);
+    const vec3_t wish_world = { wish_in.forward, wish_in.left, 0.f };
+    return air_accel_step(velocity, wish_world, air_max_wishspeed, air_accel, frame_time, surface_friction);
+}
 
 void c_movement::auto_strafe(c_user_cmd* user_cmd, float previous_yaw) {
     if (!user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
@@ -119,6 +228,12 @@ void c_movement::auto_strafe(c_user_cmd* user_cmd, float previous_yaw) {
     auto* pawn = g_ctx->m_local_pawn;
     if (!pawn->is_alive())
         return;
+
+    // Subtick-режим обрабатывается отдельным пер-сабтик стрейфером
+    if (g_cfg->misc.m_strafe_type == 3) {
+        subtick_strafe(user_cmd, pawn, previous_yaw);
+        return;
+    }
     
     // Только в воздухе
     if (pawn->m_flags() & FL_ONGROUND)
@@ -188,40 +303,175 @@ void c_movement::auto_strafe(c_user_cmd* user_cmd, float previous_yaw) {
             
             float delta = std::remainder(target_yaw - vel_angle, 360.0f);
             
-            // Rage strafe - чередуем стороны
             if (g_cfg->misc.m_strafe_type == 2) {
-                m_strafe_tick++;
-                m_strafe_direction = (m_strafe_tick % 2) == 0;
-                
-                if (m_strafe_direction) {
-                    base->set_forwardmove(0.0f);
-                    base->set_leftmove(1.0f);
-                } else {
-                    base->set_forwardmove(0.0f);
-                    base->set_leftmove(-1.0f);
+                // Rage: выбираем борт по МАКСИМАЛЬНОМУ ПРИРОСТУ скорости
+                // (предикт airaccelerate), а не вслепую чередуем стороны —
+                // слепое чередование половину тиков стрейфит ПРОТИВ веля
+                // и режет скорость. Поворот мыши имеет приоритет: если
+                // крутим мышью — стрейфим в сторону поворота.
+                static auto airaccel_var = g_interfaces->m_var->get_by_name("sv_airacceleration");
+                static auto wishspeed_var = g_interfaces->m_var->get_by_name("sv_air_max_wishspeed");
+                const float air_accel = airaccel_var ? airaccel_var->get_float() : 12.f;
+                const float wish_cap = wishspeed_var ? wishspeed_var->get_float() : 30.f;
+
+                float friction = 1.f;
+                if (auto* ms = pawn->m_movement_services()) {
+                    const float f = ms->m_surface_friction();
+                    friction = (std::isfinite(f) && f > 0.f) ? (std::clamp)(f, 0.25f, 1.f) : 1.f;
                 }
+
+                const float turn = std::remainder(current_yaw - previous_yaw, 360.f);
+                const int turn_side = turn > 0.05f ? 1 : (turn < -0.05f ? -1 : 0);
+
+                int side = 0;
+                if (turn_side != 0 && best_side_gain(velocity, current_yaw, float(turn_side),
+                        wish_cap, air_accel, INTERVAL_PER_TICK, friction) > 0.f)
+                    side = turn_side;
+                else {
+                    const float gain_left = best_side_gain(velocity, current_yaw, 1.f, wish_cap, air_accel, INTERVAL_PER_TICK, friction);
+                    const float gain_right = best_side_gain(velocity, current_yaw, -1.f, wish_cap, air_accel, INTERVAL_PER_TICK, friction);
+                    side = gain_left >= gain_right ? 1 : -1;
+                    if ((std::max)(gain_left, gain_right) <= 0.f)
+                        side = delta > 0.f ? 1 : -1; // тупик — хотя бы к велю
+                }
+
+                base->set_forwardmove(0.0f);
+                base->set_leftmove(float(side));
+                return;
+            }
+
+            // Directional - корректируем к цели
+            if (delta > ideal_angle * smooth) {
+                base->set_forwardmove(0.0f);
+                base->set_leftmove(1.0f);
+            } else if (delta < -ideal_angle * smooth) {
+                base->set_forwardmove(0.0f);
+                base->set_leftmove(-1.0f);
             } else {
-                // Directional - корректируем к цели
-                if (delta > ideal_angle * smooth) {
-                    base->set_forwardmove(0.0f);
-                    base->set_leftmove(1.0f);
-                } else if (delta < -ideal_angle * smooth) {
-                    base->set_forwardmove(0.0f);
-                    base->set_leftmove(-1.0f);
+                // У цели - WASD-комбо по зажатым кнопкам (W+A/D и т.д.),
+                // без чередования вслепую
+                if (std::hypot(keys.forward, keys.left) > 0.01f) {
+                    auto move = movement_math::bounded(keys);
+                    base->set_forwardmove(move.forward);
+                    base->set_leftmove(move.left);
                 } else {
-                    // Чередуем для набора скорости
-                    m_strafe_tick++;
-                    if (m_strafe_tick % 2 == 0) {
-                        base->set_leftmove(1.0f);
-                    } else {
-                        base->set_leftmove(-1.0f);
-                    }
-                    base->set_forwardmove(0.0f);
+                    base->set_forwardmove(1.0f);
+                    base->set_leftmove(0.0f);
                 }
             }
             break;
         }
     }
+}
+
+// ============================================================================
+// CS2 SUBTICK STRAFE — per-subtick air acceleration
+// ============================================================================
+// По мотивам UC "[Release] strafe per subtick" (#673323): тик дробится до
+// 12 сабтик-шагов, на каждом шаге — свой оптимальный борт по предикту
+// airaccelerate (sv_airacceleration * frame_time * surface_friction),
+// дельты кладутся в аналоговые поля сабтик-степов (when + analog deltas).
+// Бонус: аналоговые дельты НЕ квантуются sv_quantize_movement_input
+// (квантайз режет только базовые forward/left) — стрейф сохраняет точную
+// траекторию даже на серверах с квантайзом. Финальная база = накопленный
+// вектор (сервер применяет дельты кумулятивно).
+
+void c_movement::subtick_strafe(c_user_cmd* user_cmd, c_cs_player_pawn* pawn, float previous_yaw) {
+    if (!user_cmd || !user_cmd->pb.has_base() || !pawn)
+        return;
+
+    // В воде/на земле смысла нет
+    if (pawn->m_flags() & (FL_ONGROUND | FL_INWATER | FL_WATERJUMP))
+        return;
+
+    auto* base = user_cmd->pb.mutable_base();
+
+    // Сколько сабтик-шагов ещё влезает (обычно до 12 на тик)
+    const int free_slots = std::clamp(12 - base->subtick_moves_size(), 0, 12);
+    if (free_slots <= 0)
+        return;
+
+    const float frame_time = INTERVAL_PER_TICK / float(free_slots);
+
+    static auto airaccel_var = g_interfaces->m_var->get_by_name("sv_airacceleration");
+    static auto wishspeed_var = g_interfaces->m_var->get_by_name("sv_air_max_wishspeed");
+    const float air_accel = airaccel_var ? airaccel_var->get_float() : 12.f;
+    const float wish_cap = wishspeed_var ? wishspeed_var->get_float() : 30.f;
+
+    float friction = 1.f;
+    if (auto* ms = pawn->m_movement_services()) {
+        const float f = ms->m_surface_friction();
+        friction = (std::isfinite(f) && f > 0.f) ? (std::clamp)(f, 0.25f, 1.f) : 1.f;
+    }
+
+    const float yaw = base->viewangles().y();
+    vec3_t velocity = pawn->m_vec_abs_velocity();
+
+    const auto buttons = user_cmd->m_button_state.m_button_state;
+    const movement_math::input keys{
+        float(bool(buttons & IN_FORWARD)) - float(bool(buttons & IN_BACK)),
+        float(bool(buttons & IN_MOVELEFT)) - float(bool(buttons & IN_MOVERIGHT))
+    };
+    const bool keys_pressed = std::hypot(keys.forward, keys.left) > 0.01f;
+
+    // Поворот мыши за тик: стрейфим в сторону поворота (макс. гейн всегда
+    // в сторону поворота, если там вообще есть прирост)
+    const float turn = std::remainder(yaw - previous_yaw, 360.f);
+    const int turn_side = turn > 0.05f ? 1 : (turn < -0.05f ? -1 : 0);
+
+    float acc_fm = base->forwardmove();
+    float acc_lm = base->leftmove();
+
+    for (int i = 0; i < free_slots; ++i) {
+        float new_fm = acc_fm;
+        float new_lm = acc_lm;
+
+        if (keys_pressed) {
+            // WASD зажат — держим направление игрока (б_hop с управлением)
+            new_fm = keys.forward;
+            new_lm = keys.left;
+        }
+        else {
+            // Свободный полёт: оптимальный борт на КАЖДЫЙ сабтик.
+            // Поворот мыши приоритетнее (стрейф под камеру), иначе max-gain.
+            if (turn_side != 0 && best_side_gain(velocity, yaw, float(turn_side),
+                    wish_cap, air_accel, frame_time, friction) > 0.f) {
+                new_fm = 0.f;
+                new_lm = float(turn_side);
+            }
+            else {
+                const float gain_left = best_side_gain(velocity, yaw, 1.f, wish_cap, air_accel, frame_time, friction);
+                const float gain_right = best_side_gain(velocity, yaw, -1.f, wish_cap, air_accel, frame_time, friction);
+                if ((std::max)(gain_left, gain_right) <= 0.f)
+                    continue; // прироста нет — шаг не нужен
+
+                new_fm = 0.f;
+                new_lm = gain_left >= gain_right ? 1.f : -1.f;
+            }
+        }
+
+        if (new_fm == acc_fm && new_lm == acc_lm)
+            continue;
+
+        // Предиктим скорость этим шагом (для следующих сабтиков)
+        const auto wish_in = movement_math::rotate({new_fm, new_lm}, 0.f, yaw);
+        const vec3_t wish_world = { wish_in.forward, wish_in.left, 0.f };
+        air_accel_step(velocity, wish_world, wish_cap, air_accel, frame_time, friction);
+
+        auto* step = g_protobuf->add_subtick_move_step(user_cmd);
+        if (!step)
+            break;
+
+        step->set_when(float(i) / float(free_slots));
+        step->set_analog_forward_delta(new_fm - acc_fm);
+        step->set_analog_left_delta(new_lm - acc_lm);
+        acc_fm = new_fm;
+        acc_lm = new_lm;
+    }
+
+    // База = накопленный вектор (дельты кумулятивны поверх базы)
+    base->set_forwardmove(acc_fm);
+    base->set_leftmove(acc_lm);
 }
 
 // ============================================================================
@@ -286,8 +536,19 @@ void c_movement::movement_fix(c_user_cmd* user_cmd, vec3_t original_angles) {
     const float fm = base->forwardmove();
     const float sm = base->leftmove();
 
-    // Нет инпута — ротировать нечего (и не надо трогать upmove/кнопки)
-    if (std::fabs(fm) <= 0.0001f && std::fabs(sm) <= 0.0001f)
+    // Есть ли аналоговые дельты в сабтик-степах (subtick strafe)?
+    bool has_deltas = false;
+    const int step_count = base->subtick_moves_size();
+    for (int i = 0; i < step_count; ++i) {
+        auto* step = base->mutable_subtick_moves(i);
+        if (step && (step->analog_forward_delta() != 0.f || step->analog_left_delta() != 0.f)) {
+            has_deltas = true;
+            break;
+        }
+    }
+
+    // Нет инпута ни в базе, ни в дельтах — ротировать нечего
+    if (std::fabs(fm) <= 0.0001f && std::fabs(sm) <= 0.0001f && !has_deltas)
         return;
 
     // Лестница/ноклип — движок и так двигает по своим углам
@@ -308,11 +569,45 @@ void c_movement::movement_fix(c_user_cmd* user_cmd, vec3_t original_angles) {
 
     // Компенсация серверного квантайза
     static auto quantize_cvar = g_interfaces->m_var->get_by_name("sv_quantize_movement_input");
-    if (quantize_cvar && quantize_cvar->get_bool())
+    const bool quantized = quantize_cvar && quantize_cvar->get_bool();
+    if (quantized)
         move = quantize_move_input(move, user_cmd->m_command_number);
 
     base->set_forwardmove(move.forward);
     base->set_leftmove(move.left);
+
+    // Ротируем и аналоговые дельты сабтик-степов — иначе сабтик-стрейфер
+    // после поворота углов AA/silent-аимом уедет вбок (дельты применяются
+    // сервером в системе координат ФИНАЛЬНЫХ углов).
+    if (has_deltas) {
+        for (int i = 0; i < step_count; ++i) {
+            auto* step = base->mutable_subtick_moves(i);
+            if (!step)
+                continue;
+            const float dF = step->analog_forward_delta();
+            const float dL = step->analog_left_delta();
+            if (dF == 0.f && dL == 0.f)
+                continue;
+            const auto rot = movement_math::rotate({dF, dL}, old_yaw, new_yaw);
+            step->set_analog_forward_delta(rot.forward);
+            step->set_analog_left_delta(rot.left);
+        }
+
+        // При квантайзе база заменена решёточным вектором — суммарный
+        // вектор съехал. Компенсируем в ПОСЛЕДНЕЙ ненулевой дельте, чтобы
+        // траектория осталась ровно той же.
+        if (quantized && step_count > 0) {
+            const auto pre = movement_math::rotate({fm, sm}, old_yaw, new_yaw);
+            for (int i = step_count - 1; i >= 0; --i) {
+                auto* step = base->mutable_subtick_moves(i);
+                if (!step || (step->analog_forward_delta() == 0.f && step->analog_left_delta() == 0.f))
+                    continue;
+                step->set_analog_forward_delta(step->analog_forward_delta() + pre.forward - move.forward);
+                step->set_analog_left_delta(step->analog_left_delta() + pre.left - move.left);
+                break;
+            }
+        }
+    }
 }
 
 // ============================================================================
