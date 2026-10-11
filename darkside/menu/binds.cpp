@@ -259,14 +259,18 @@ void save_if_dirty() {
         g_dirty = false;
 }
 
-void begin_capture(bind_entry& entry) {
-    g_capture_entry = entry.id;
+void begin_capture(bind_entry& entry, bool is_draft = false) {
+    // A draft's id is regenerated every frame the "New Bind" row re-latches, so it can't be the
+    // capture handle - key it off the stable k_draft_entry sentinel instead. Real entries keep
+    // their own id (stable inside target.entries).
+    g_capture_entry = is_draft ? k_draft_entry : entry.id;
     for (int key = 1; key <= 0xA5; ++key)
         g_capture_down[key] = (GetAsyncKeyState(key) & 0x8000) != 0;
 }
 
-bool update_capture(bind_entry& entry) {
-    if (g_capture_entry != entry.id)
+bool update_capture(bind_entry& entry, bool is_draft = false) {
+    const std::uint64_t handle = is_draft ? k_draft_entry : entry.id;
+    if (g_capture_entry != handle)
         return false;
 
     ImGui::SetNextFrameWantCaptureKeyboard(true);
@@ -400,7 +404,7 @@ void bind_menu_separator() {
 }
 
 // "Key  [ N ]" - clicking the box arms begin_capture(); the next key pressed lands in `entry`.
-bool bind_key_row(bind_entry& entry) {
+bool bind_key_row(bind_entry& entry, bool is_draft = false) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImFont* font = ImGui::GetFont();
     const float s = gui.m_scale;
@@ -412,7 +416,7 @@ bool bind_key_row(bind_entry& entry) {
     draw->AddText(font, fs, ImVec2(pos.x + 8.f * s, IM_ROUND(cy - TextLineCenterY(font, fs))),
                   gui.text.to_im_color(1.f, false), gui.tr("Key"));
 
-    const bool capturing = g_capture_entry == entry.id;
+    const bool capturing = g_capture_entry == (is_draft ? k_draft_entry : entry.id);
     const std::string shown = capturing ? std::string("...")
         : (entry.key > 0 ? key_name(entry.key) : std::string("-"));
     const float box_h = 22.f * s;
@@ -423,7 +427,7 @@ bool bind_key_row(bind_entry& entry) {
     const bool hovered = ImGui::IsMouseHoveringRect(box.Min, box.Max, true);
     bool started = false;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !capturing) {
-        begin_capture(entry);
+        begin_capture(entry, is_draft);
         started = true;
     }
     const float t = row_anim(ImGui::GetID("##keybox"), hovered || capturing);
@@ -585,11 +589,11 @@ bool draw_entry_card(bind_target& target, bind_entry& entry, bool is_draft,
     if (!gui.begin_popup_card_at(name, wants_open, anim, at, ImVec2(0.f, 0.f), 196.f))
         return true;
 
-    if (bind_key_row(entry))
+    if (bind_key_row(entry, is_draft))
         mark_dirty();
     // Has to run every frame the card is up, not only when the box was clicked: this is what
     // actually reads the keyboard while the bind is armed.
-    const bool got_key = update_capture(entry);
+    const bool got_key = update_capture(entry, is_draft);
     if (bind_mode_row(entry))
         mark_dirty();
     if (bind_value_row(target, entry))
@@ -687,7 +691,11 @@ void draw_bind_menu(bind_target& target, const ImRect& rect, const ImRect& contr
             if (target.entries.size() < 16) {
                 const menu_row row = bind_menu_row("##new", ICON_FA_PLUS_CIRCLE, "New Bind", true,
                                                    g_submenu == k_draft_entry, c_text, true);
-                if (row.hovered && g_submenu != k_draft_entry) {
+                // Don't regenerate the draft while its key is being captured: a stray re-latch
+                // (e.g. the key-box click also landing in the parent card's rect and resetting
+                // g_submenu) would otherwise wipe the pending bind out from under the capture.
+                const bool capturing_draft = g_capture_entry == k_draft_entry && g_draft_target == target.id;
+                if (row.hovered && g_submenu != k_draft_entry && !capturing_draft) {
                     // A fresh pending bind, pre-filled against what the row is set to right now.
                     g_draft = bind_entry{};
                     g_draft.id = g_next_entry_id++;
@@ -698,6 +706,10 @@ void draw_bind_menu(bind_target& target, const ImRect& rect, const ImRect& contr
                     g_draft_target = target.id;
                     request_submenu(k_draft_entry);
                 }
+                // If a re-latch pulled the submenu off the draft while it was still capturing,
+                // put it back so the card stays open on the pending bind.
+                if (capturing_draft && g_submenu != k_draft_entry)
+                    request_submenu(k_draft_entry);
                 // Submitted even when the latch has moved on, so the card gets to fade out.
                 if (g_draft_target == target.id) {
                     bool ignored = false;
@@ -745,7 +757,7 @@ void draw_bind_menu(bind_target& target, const ImRect& rect, const ImRect& contr
     else if (!wants_open && g_capture_entry != 0) {
         // The menu went away mid-capture (clicked elsewhere, tab switched): disarm, or the next
         // key press would be eaten on behalf of a card nobody can see.
-        const bool mine = g_capture_entry == g_draft.id ||
+        const bool mine = (g_capture_entry == k_draft_entry && g_draft_target == target.id) ||
             std::any_of(target.entries.begin(), target.entries.end(),
                         [](const bind_entry& entry) { return entry.id == g_capture_entry; });
         if (mine)
