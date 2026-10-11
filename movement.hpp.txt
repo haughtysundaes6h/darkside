@@ -36,6 +36,9 @@ private:
     // Edge detection
     int m_ground_ticks = 0;
     bool m_edge_jump_triggered = false;
+
+    // Bhop: release-переход в воздухе уже сделан (кнопка "отжата" для сервера)
+    bool m_bhop_release_done = false;
     
 public:
     // ========================================================================

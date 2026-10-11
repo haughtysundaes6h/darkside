@@ -74,38 +74,112 @@ void c_movement::on_create_move(c_user_cmd* user_cmd) {
 bool c_movement::bunnyhop(c_user_cmd* user_cmd, bool jump_held) {
     if (!user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
         return false;
-    
-    // Если прыжок не нажат - ничего не делаем
-    if (!jump_held)
-        return false;
-    
+
     auto* pawn = g_ctx->m_local_pawn;
     if (!pawn->is_alive() || pawn->m_actual_move_type() != movetype_walk)
         return false;
-    
+
     // В воде не работает
     if (pawn->m_flags() & (FL_INWATER | FL_WATERJUMP))
         return false;
-    
-    // Получаем landing prediction от CS2 engine
-    auto landing = g_prediction->landing(pawn, user_cmd);
-    
-    // Проверяем на земле ли мы
-    const bool grounded = landing.valid ? landing.grounded : (pawn->m_flags() & FL_ONGROUND) != 0;
-    
-    // Функция для создания subtick шага
-    auto allocate = [&]() { 
-        return g_protobuf->add_subtick_move_step(user_cmd); 
-    };
-    
-    // Если скоро приземлимся - делаем subtick прыжок на момент приземления
-    if (!grounded && landing.will_land && landing.fraction > 0.0f && landing.fraction < 1.0f) {
-        // Landing jump - прыжок на фракции приземления
-        return command_movement::landing_jump(*user_cmd, landing.fraction, allocate);
+
+    // Защита от двойного вызова: бхоп дергается и из хука, и из
+    // on_create_move — обрабатываем один номер команды один раз
+    static int last_bhop_command = -1;
+    const bool already_processed = (user_cmd->m_command_number == last_bhop_command);
+    last_bhop_command = user_cmd->m_command_number;
+
+    // Кнопка не зажата — физические прыжки движок обработает сам
+    if (!jump_held) {
+        m_bhop_release_done = false;
+        return false;
     }
-    
-    // Стандартный прыжок если на земле
-    return command_movement::set_jump(*user_cmd, grounded, 0.0f, allocate);
+
+    auto* base = user_cmd->pb.mutable_base();
+    auto allocate = [&]() {
+        return g_protobuf->add_subtick_move_step(user_cmd);
+    };
+
+    auto landing = g_prediction->landing(pawn, user_cmd);
+    const bool grounded = landing.valid ? landing.grounded : (pawn->m_flags() & FL_ONGROUND) != 0;
+
+    auto& buttons = user_cmd->m_button_state;
+
+    auto make_step = [&](bool press, float when) -> CSubtickMoveStep* {
+        if (already_processed)
+            return nullptr;
+        auto* step = allocate();
+        if (!step)
+            return nullptr;
+        step->set_button(IN_JUMP);
+        step->set_pressed(press);
+        step->set_when(when);
+        step->clear_analog_forward_delta();
+        step->clear_analog_left_delta();
+        step->clear_pitch_delta();
+        step->clear_yaw_delta();
+        return step;
+    };
+
+    auto find_jump_step = [&](bool press) -> CSubtickMoveStep* {
+        for (int i = 0; i < base->subtick_moves_size(); ++i) {
+            auto* step = base->mutable_subtick_moves(i);
+            if (step && step->button() == IN_JUMP && step->pressed() == press)
+                return step;
+        }
+        return nullptr;
+    };
+
+    if (grounded) {
+        // === ПРЫЖОК ===
+        // В воздухе мы сняли IN_JUMP с кнопок, поэтому у сервера
+        // last_buttons без джампа и наш press — НОВЫЙ переход. Без этого
+        // зажатая со прошлого прыжка кнопка не даёт перехода и прыжок
+        // молчит (именно поэтому старый вариант не работал со второго хопа).
+        if (!find_jump_step(true))
+            make_step(true, 0.0f);
+
+        buttons.m_button_state |= IN_JUMP;      // состояние на конец тика
+        buttons.m_button_state2 |= IN_JUMP;     // был press в этом тике
+        buttons.m_button_state3 &= ~IN_JUMP;
+
+        m_bhop_release_done = false;
+        return true;
+    }
+
+    // === ВОЗДУХ ===
+    // Готовим свежий press к следующему приземлению: сервер НЕ должен
+    // видеть IN_JUMP в last_buttons. Стираем биты; в тике реального
+    // перехода вниз ставим release-степ, чтобы ни один путь сервера не
+    // считал кнопку зажатой.
+    const bool had_jump = (buttons.m_button_state & IN_JUMP) != 0;
+    buttons.m_button_state &= ~IN_JUMP;
+    buttons.m_button_state2 &= ~IN_JUMP;
+    if (had_jump)
+        buttons.m_button_state3 |= IN_JUMP;     // release в этом тике
+    else
+        buttons.m_button_state3 &= ~IN_JUMP;
+
+    if (had_jump || !m_bhop_release_done) {
+        if (!find_jump_step(false))
+            make_step(false, 0.0f);
+        m_bhop_release_done = true;
+    }
+
+    // Landing predict: если коснёмся земли в середине тика — жмём прыжок
+    // прямо на фракции приземления, не теряя тик на границе.
+    if (landing.valid && landing.will_land && landing.fraction > 0.0f && landing.fraction < 1.0f) {
+        if (!find_jump_step(true))
+            make_step(true, landing.fraction);
+
+        // Пресс на фракции остаётся зажатым до конца тика; state3 поднят
+        // только если release случился в этом же тике
+        buttons.m_button_state |= IN_JUMP;
+        buttons.m_button_state2 |= IN_JUMP;
+        return true;
+    }
+
+    return true;
 }
 
 // ============================================================================
