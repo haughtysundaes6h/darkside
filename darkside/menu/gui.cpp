@@ -2188,12 +2188,25 @@ void c_gui::apply_theme( int new_theme ) {
 }
 
 void c_gui::apply_style_colors( ) {
-    ImVec4* c = ImGui::GetStyle( ).Colors;
+    ImGuiStyle& style = ImGui::GetStyle( );
+    ImVec4* c = style.Colors;
     c[ ImGuiCol_Text ]           = text.to_vec4( 1.f, false );
     c[ ImGuiCol_TextDisabled ]   = text_disabled.to_vec4( 1.f, false );
     c[ ImGuiCol_Separator ]      = border.to_vec4( 1.f, false );
     c[ ImGuiCol_Border ]         = border.to_vec4( 1.f, false );
     c[ ImGuiCol_TextSelectedBg ] = accent_color.to_vec4( 0.30f, false );
+
+    // Scrollbars - the ones a long Combo / MultiCombo list and the top bar's config list get.
+    // They sit on a card whose surface is blur + tint, and the stock ImGui ones (14px wide, dark
+    // translucent track, flat gray grab) read there as a foreign bar lying over the frost rather
+    // than as part of the list. Thin, trackless, on the palette; the grab goes to the accent while
+    // it is dragged.
+    c[ ImGuiCol_ScrollbarBg ]          = ImVec4( 0.f, 0.f, 0.f, 0.f );
+    c[ ImGuiCol_ScrollbarGrab ]        = text_disabled.to_vec4( 0.45f, false );
+    c[ ImGuiCol_ScrollbarGrabHovered ] = text.to_vec4( 0.70f, false );
+    c[ ImGuiCol_ScrollbarGrabActive ]  = accent_color.to_vec4( 0.90f, false );
+    style.ScrollbarSize     = 6.f * m_scale;
+    style.ScrollbarRounding = 3.f * m_scale;
 }
 
 // ---------------------------------------------------------------------------------------

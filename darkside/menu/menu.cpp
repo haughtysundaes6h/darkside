@@ -259,7 +259,10 @@ void c_menu::draw_rage() {
     gui.grid_box("MAIN", k_auto_height);
 
     // Every row below edits the selected group; General is the fallback the others override.
-    gui.row_begin(); ImGui::Combo("Weapon Group", &rage.m_selected_group, weapon_group_names, WEAPON_GROUP_MAX);
+    // The list is allowed to be as tall as it has entries: past popup_max_height_in_items ImGui
+    // grows it a scrollbar, and a scrollbar is more furniture than a 10-entry picker needs.
+    gui.row_begin(); ImGui::Combo("Weapon Group", &rage.m_selected_group, weapon_group_names,
+                                  WEAPON_GROUP_MAX, WEAPON_GROUP_MAX);
 
     gui.row_begin();
     if (gui.row_options_begin("##enable_opts", 216.f, c_gui::row_control::toggle)) {
