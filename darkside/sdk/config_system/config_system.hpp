@@ -213,7 +213,7 @@ public:
         int m_yaw_jitter = 0;  // UI combo: 0=Disabled, 1=Low, 2=Medium, 3=High
 
         // ====== MISC (rage anti-aim box) ======
-        bool m_slow_walk = false;
+        bool m_aa_slow_walk = false;
         bool m_freestanding = false;
         int m_freestanding_mode = 0;  // 0=Auto, 1=Left, 2=Right
         
