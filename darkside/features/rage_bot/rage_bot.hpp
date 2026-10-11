@@ -5,6 +5,9 @@
 #include "../auto_wall/auto_wall.hpp"
 #include "../eng_pred/eng_pred.hpp"
 
+// Forward declaration
+struct auto_stop_options_t;
+
 struct lag_record_t
 {
 	vec3_t m_origin{};
@@ -145,7 +148,7 @@ struct lag_record_t
 				                                   predicted_velocity.y * predicted_velocity.y);
 				if (speed_2d > 0.f) {
 					const float friction = 0.96f; // CS2 ground friction
-					const float new_speed = std::max(0.f, speed_2d * friction);
+					const float new_speed = (std::max)(0.f, speed_2d * friction);
 					const float ratio = new_speed / speed_2d;
 					predicted_velocity.x *= ratio;
 					predicted_velocity.y *= ratio;
@@ -172,14 +175,16 @@ struct lag_record_t
 			return false;
 		const float dead_time = (local->m_tick_base * INTERVAL_PER_TICK) - m_simulation_time;
 		
-		// ИСПРАВЛЕНИЕ #7: Проверяем breaking lag compensation
+		// Проверяем breaking lag compensation
 		// Если запись слишком старая или будущая - невалидна
 		if (!std::isfinite(dead_time) || dead_time < -0.2f || dead_time > 0.2f)
 			return false;
 			
 		// Проверяем что скорость в норме (не телепорт/багованная запись)
 		if (std::isfinite(m_vec_velocity.x) && std::isfinite(m_vec_velocity.y) && std::isfinite(m_vec_velocity.z)) {
-			const float speed = m_vec_velocity.length();
+			// Используем копию для вычисления длины
+			vec3_t vel_copy = m_vec_velocity;
+			const float speed = vel_copy.length();
 			if (speed > 5000.f) // Телепорт или баг
 				return false;
 		}
@@ -246,17 +251,6 @@ struct aim_target_t
 		m_pawn = nullptr;
 		m_best_point.reset();
 	}
-};
-
-// Auto-stop options structure
-struct auto_stop_options_t {
-	bool m_enabled = false;
-	bool m_early = false;
-	bool m_full = true;
-	bool m_between = false;
-	bool m_air = false;
-	bool m_duck = false;
-	bool m_no_spread = false;
 };
 
 class c_rage_bot

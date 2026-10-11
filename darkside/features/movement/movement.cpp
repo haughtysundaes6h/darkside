@@ -192,13 +192,15 @@ static float air_accel_step(vec3_t& velocity, const vec3_t& wish_dir_world,
                             float air_max_wishspeed, float air_accel,
                             float frame_time, float surface_friction)
 {
-    const float wish_len = wish_dir_world.length();
+    // Создаем копию для вычислений (так как методы vec3_t не const)
+    vec3_t wish_copy = wish_dir_world;
+    const float wish_len = wish_copy.length();
     if (wish_len <= 0.001f)
         return 0.f;
 
     // CS2: в воздухе wishspeed капится sv_air_max_wishspeed (30)
     const float wish_speed = (std::min)(wish_len, air_max_wishspeed);
-    const vec3_t dir = wish_dir_world / wish_len;
+    vec3_t dir = wish_copy / wish_len;
 
     const float current_speed = velocity.dot(dir);
     const float adds = wish_speed - current_speed;

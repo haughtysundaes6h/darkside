@@ -211,7 +211,7 @@ lag_record_t* c_rage_bot::select_record(int handle, int min_damage)
 		if (prev_record && std::isfinite(prev_record->m_simulation_time) && 
 		    std::isfinite(record.m_simulation_time)) {
 			const float time_delta = prev_record->m_simulation_time - record.m_simulation_time;
-			const vec3_t pos_delta = prev_record->m_origin - record.m_origin;
+			vec3_t pos_delta = prev_record->m_origin - record.m_origin;
 			const float distance = pos_delta.length();
 			
 			// Если дистанция слишком большая для временного промежутка - пропускаем
