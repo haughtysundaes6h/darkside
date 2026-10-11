@@ -558,7 +558,314 @@ bool c_rage_bot::multi_points(lag_record_t* record, int hitbox, std::vector<aim_
 	return true;
 }
 
-aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float inaccuracy, float spread, int resolver_side) {
+
+namespace {
+
+float capsule_enter(const vec3_t& start, const vec3_t& dir, const vec3_t& a, const vec3_t& b, float radius, float max_t) {
+	const float abx = b.x - a.x;
+	const float aby = b.y - a.y;
+	const float abz = b.z - a.z;
+	const float ab_len2 = abx * abx + aby * aby + abz * abz;
+
+	auto sphere = [&](float cx, float cy, float cz) -> float {
+		const float ox = start.x - cx;
+		const float oy = start.y - cy;
+		const float oz = start.z - cz;
+		const float A = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+		const float B = 2.f * (ox * dir.x + oy * dir.y + oz * dir.z);
+		const float C = ox * ox + oy * oy + oz * oz - radius * radius;
+		const float disc = B * B - 4.f * A * C;
+		if (disc < 0.f || A < 1e-8f)
+			return -1.f;
+		const float root = std::sqrt(disc);
+		float t = (-B - root) / (2.f * A);
+		if (t < 0.f)
+			t = (-B + root) / (2.f * A);
+		if (t < 0.f || t > max_t)
+			return -1.f;
+		return t;
+	};
+
+	if (ab_len2 < 1e-4f)
+		return sphere(a.x, a.y, a.z);
+
+	const float aox = start.x - a.x;
+	const float aoy = start.y - a.y;
+	const float aoz = start.z - a.z;
+	const float d_ab = dir.x * abx + dir.y * aby + dir.z * abz;
+	const float ao_ab = aox * abx + aoy * aby + aoz * abz;
+	const float dir_len2 = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+	const float A = ab_len2 * dir_len2 - d_ab * d_ab;
+	const float B = 2.f * (ab_len2 * (aox * dir.x + aoy * dir.y + aoz * dir.z) - d_ab * ao_ab);
+	const float C = ab_len2 * (aox * aox + aoy * aoy + aoz * aoz) - ao_ab * ao_ab - radius * radius * ab_len2;
+
+	float best = -1.f;
+	auto take = [&](float t) {
+		if (t >= 0.f && t <= max_t && (best < 0.f || t < best))
+			best = t;
+	};
+	if (std::fabs(A) > 1e-5f) {
+		const float disc = B * B - 4.f * A * C;
+		if (disc >= 0.f) {
+			const float root = std::sqrt(disc);
+			const float t0 = (-B - root) / (2.f * A);
+			const float t1 = (-B + root) / (2.f * A);
+			for (float t : { t0, t1 }) {
+				if (t < 0.f || t > max_t)
+					continue;
+				const float along = (ao_ab + t * d_ab) / ab_len2;
+				if (along >= 0.f && along <= 1.f)
+					take(t);
+			}
+		}
+	}
+	take(sphere(a.x, a.y, a.z));
+	take(sphere(b.x, b.y, b.z));
+	return best;
+}
+
+int scan_rank(int hitbox) {
+	switch (hitbox) {
+	case HITBOX_STOMACH:
+	case HITBOX_PELVIS: return 0;
+	case HITBOX_CHEST:
+	case HITBOX_UPPER_CHEST:
+	case HITBOX_LOWER_CHEST: return 1;
+	case HITBOX_RIGHT_UPPER_ARM:
+	case HITBOX_LEFT_UPPER_ARM:
+	case HITBOX_RIGHT_FOREARM:
+	case HITBOX_LEFT_FOREARM:
+	case HITBOX_RIGHT_HAND:
+	case HITBOX_LEFT_HAND: return 2;
+	case HITBOX_RIGHT_THIGH:
+	case HITBOX_LEFT_THIGH:
+	case HITBOX_RIGHT_CALF:
+	case HITBOX_LEFT_CALF: return 3;
+	case HITBOX_RIGHT_FOOT:
+	case HITBOX_LEFT_FOOT: return 4;
+	case HITBOX_HEAD: return 5;
+	default: return 6;
+	}
+}
+
+bool better_shot(int hitbox, float damage, bool center, int best_hitbox, float best_damage, bool best_center,
+	int health, bool prefer_body) {
+	if (best_hitbox < 0)
+		return true;
+	const bool body = hitbox != HITBOX_HEAD;
+	const bool best_body = best_hitbox != HITBOX_HEAD;
+	const bool lethal = damage >= static_cast<float>(health);
+	const bool best_lethal = best_damage >= static_cast<float>(health);
+	const int rank = (body && lethal) ? 0 : (prefer_body && body) ? 1 : lethal ? 2 : 3;
+	const int best_rank = (best_body && best_lethal) ? 0 : (prefer_body && best_body) ? 1 : best_lethal ? 2 : 3;
+	if (rank != best_rank)
+		return rank < best_rank;
+	if (body && best_body && lethal && best_lethal && scan_rank(hitbox) != scan_rank(best_hitbox))
+		return scan_rank(hitbox) < scan_rank(best_hitbox);
+	if (center != best_center)
+		return center;
+	return damage > best_damage + 0.05f;
+}
+
+} // namespace
+
+int c_rage_bot::minimum_for(c_cs_player_pawn* target, c_cs_weapon_base_v_data* data) const {
+	const int health = target ? (std::max)(target->m_health(), 1) : 100;
+	const bool taser = data && data->m_weapon_type() == WEAPONTYPE_TASER;
+	const bool override_damage = g_key_handler->is_pressed(
+		g_cfg->rage_bot.m_override_damage_key_bind, g_cfg->rage_bot.m_override_damage_key_bind_style);
+	int minimum = weapon_config().m_minimum_damage < 0 ? health : weapon_config().m_minimum_damage;
+	if (override_damage)
+		minimum = 1;
+	minimum = (std::min)((std::max)(minimum, 1), health);
+	if (taser)
+		minimum = health;
+	return minimum;
+}
+
+int c_rage_bot::hitgroup_of(const hitbox_data_t& data, int hitbox) const {
+	if (data.m_num_hitgroup >= HITGROUP_HEAD && data.m_num_hitgroup <= HITGROUP_NECK)
+		return data.m_num_hitgroup;
+	switch (hitbox) {
+	case HITBOX_HEAD: return HITGROUP_HEAD;
+	case HITBOX_NECK: return HITGROUP_NECK;
+	case HITBOX_PELVIS:
+	case HITBOX_STOMACH: return HITGROUP_STOMACH;
+	case HITBOX_CHEST:
+	case HITBOX_LOWER_CHEST:
+	case HITBOX_UPPER_CHEST: return HITGROUP_CHEST;
+	case HITBOX_RIGHT_HAND:
+	case HITBOX_RIGHT_UPPER_ARM:
+	case HITBOX_RIGHT_FOREARM: return HITGROUP_RIGHTARM;
+	case HITBOX_LEFT_HAND:
+	case HITBOX_LEFT_UPPER_ARM:
+	case HITBOX_LEFT_FOREARM: return HITGROUP_LEFTARM;
+	case HITBOX_RIGHT_THIGH:
+	case HITBOX_RIGHT_CALF:
+	case HITBOX_RIGHT_FOOT: return HITGROUP_RIGHTLEG;
+	case HITBOX_LEFT_THIGH:
+	case HITBOX_LEFT_CALF:
+	case HITBOX_LEFT_FOOT: return HITGROUP_LEFTLEG;
+	default: return HITGROUP_CHEST;
+	}
+}
+
+float c_rage_bot::unscaled_damage(c_cs_weapon_base_v_data* data, float distance) const {
+	if (!data)
+		return 0.f;
+	float damage = static_cast<float>(data->m_damage());
+	if (!(damage > 0.f))
+		return 0.f;
+	const float range = data->m_range();
+	if (range > 1.f && distance > range)
+		return 0.f;
+	const float modifier = data->m_range_modifier();
+	if (modifier > 0.f && modifier < 1.f && distance > 0.f)
+		damage *= std::pow(modifier, distance / 500.f);
+	return damage;
+}
+
+float c_rage_bot::scaled_damage(c_cs_weapon_base_v_data* data, c_cs_player_pawn* pawn, int hitgroup,
+	float distance, float pen_ratio) const {
+	float damage = unscaled_damage(data, distance) * clampf(pen_ratio, 0.f, 1.f);
+	if (damage < 1.f || !pawn)
+		return 0.f;
+	g_auto_wall->scale_damage(hitgroup, pawn, data, damage);
+	return damage;
+}
+
+bool c_rage_bot::hitbox_can_meet(c_cs_weapon_base_v_data* data, c_cs_player_pawn* pawn, int hitbox,
+	float distance, float minimum, bool taser) const {
+	if (taser)
+		return true;
+	hitbox_data_t box{};
+	box.m_num_hitgroup = 0;
+	const int group = hitgroup_of(box, hitbox);
+	// Optimistic distance already subtracted by the caller. This is the ceiling,
+	// not the shot we will take — if even this is under min damage, don't scan.
+	return scaled_damage(data, pawn, group, distance, 1.f) + 0.05f >= minimum;
+}
+
+void c_rage_bot::build_capsules(lag_record_t* record, rage_capsule_t* caps, int count) const {
+	if (!caps || count <= 0)
+		return;
+	for (int i = 0; i < count; ++i)
+		caps[i] = {};
+	if (!record || !record->m_pawn)
+		return;
+	const int limit = (std::min)(count, static_cast<int>(HITBOX_MAX));
+	for (int hitbox = 0; hitbox < limit; ++hitbox) {
+		hitbox_data_t data = get_hitbox_data(record->m_pawn, hitbox, record);
+		if (data.m_invalid_data)
+			continue;
+		rage_capsule_t& cap = caps[hitbox];
+		g_math->vector_transform(data.m_mins, data.m_matrix, cap.m_a);
+		g_math->vector_transform(data.m_maxs, data.m_matrix, cap.m_b);
+		cap.m_radius = (std::max)(data.m_radius, 0.1f);
+		cap.m_hitbox = hitbox;
+		cap.m_hitgroup = hitgroup_of(data, hitbox);
+		cap.m_valid = true;
+	}
+}
+
+int c_rage_bot::capsule_hit(const rage_capsule_t* caps, int count, const vec3_t& eye, const vec3_t& point, float& entry, int prefer) const {
+	entry = 0.f;
+	if (!caps || count <= 0)
+		return -1;
+	const float dx = point.x - eye.x;
+	const float dy = point.y - eye.y;
+	const float dz = point.z - eye.z;
+	const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+	if (dist < 1.f)
+		return -1;
+	const vec3_t dir{ dx / dist, dy / dist, dz / dist };
+	const float max_t = dist + 8.f;
+	int first = -1;
+	float first_t = max_t + 1.f;
+	float prefer_t = -1.f;
+	for (int i = 0; i < count; ++i) {
+		if (!caps[i].m_valid)
+			continue;
+		const float t = capsule_enter(eye, dir, caps[i].m_a, caps[i].m_b, caps[i].m_radius + 1.25f, max_t);
+		if (t < 0.f)
+			continue;
+		if (caps[i].m_hitbox == prefer && (prefer_t < 0.f || t < prefer_t))
+			prefer_t = t;
+		if (t < first_t) {
+			first_t = t;
+			first = caps[i].m_hitbox;
+		}
+	}
+	// Overlapping capsules (chest/stomach) can be a fraction closer. An arm
+	// actually in front is several units closer and must still win.
+	if (prefer >= 0 && prefer_t >= 0.f && prefer_t <= first_t + 1.5f) {
+		entry = prefer_t;
+		return prefer;
+	}
+	entry = first >= 0 ? first_t : dist;
+	return first;
+}
+
+float c_rage_bot::score_centers(lag_record_t* record, const vec3_t& eye, c_cs_weapon_base_v_data* data,
+	bool allow_pen, bool taser, int minimum) const {
+	if (!record || !record->m_pawn || !data)
+		return -1.f;
+	rage_capsule_t caps[HITBOX_MAX]{};
+	build_capsules(record, caps, HITBOX_MAX);
+	const float optimistic = (std::max)(1.f, eye.dist(record->m_origin) - 48.f);
+	float best = -1.f;
+	for (int hitbox : m_hitboxes) {
+		if (hitbox < 0 || hitbox >= HITBOX_MAX || !caps[hitbox].m_valid)
+			continue;
+		if (!hitbox_can_meet(data, record->m_pawn, hitbox, optimistic, static_cast<float>(minimum), taser))
+			continue;
+		vec3_t center{
+			(caps[hitbox].m_a.x + caps[hitbox].m_b.x) * 0.5f,
+			(caps[hitbox].m_a.y + caps[hitbox].m_b.y) * 0.5f,
+			(caps[hitbox].m_a.z + caps[hitbox].m_b.z) * 0.5f
+		};
+		float entry = 0.f;
+		if (capsule_hit(caps, HITBOX_MAX, eye, center, entry, hitbox) != hitbox)
+			continue;
+		penetration_data_t pen{};
+		if (!g_auto_wall->fire_bullet(eye, center, record->m_pawn, data, pen, taser))
+			continue;
+		if (!allow_pen && pen.m_penetrated)
+			continue;
+		float ratio = 1.f;
+		const float expected = unscaled_damage(data, entry);
+		if (expected > 1.f && pen.m_damage > 0.f && pen.m_damage <= expected * 1.15f)
+			ratio = clampf(pen.m_damage / expected, 0.05f, 1.f);
+		else if (pen.m_penetrated && expected > 1.f && pen.m_damage > expected * 1.15f)
+			ratio = clampf(expected / pen.m_damage, 0.05f, 1.f);
+		best = (std::max)(best, scaled_damage(data, record->m_pawn, caps[hitbox].m_hitgroup, entry, ratio));
+	}
+	return best;
+}
+
+void c_rage_bot::press_scope(c_user_cmd* cmd) {
+	if (!cmd || !cmd->pb.has_base())
+		return;
+	cmd->m_button_state.m_button_state |= IN_ATTACK2;
+	cmd->m_button_state.m_button_state2 |= IN_ATTACK2;
+	cmd->m_button_state.m_button_state3 |= IN_ATTACK2;
+	if (cmd->pb.input_history_size() > 0)
+		cmd->pb.set_attack2_start_history_index(0);
+	if (cmd->pb.mutable_base()->subtick_moves_size() >= 12)
+		return;
+	auto* press = g_protobuf->add_subtick_move_step(cmd);
+	if (!press)
+		return;
+	press->set_button(IN_ATTACK2);
+	press->set_pressed(true);
+	press->set_when(0.f);
+	press->clear_analog_forward_delta();
+	press->clear_analog_left_delta();
+	press->clear_pitch_delta();
+	press->clear_yaw_delta();
+}
+
+aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float inaccuracy, float spread, int resolver_side, int minimum) {
 	aim_point_t best{};
 	damage = 0.f;
 	if (!record || !record->m_pawn || !g_ctx->m_local_pawn)
@@ -573,16 +880,43 @@ aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float
 	const bool taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
 	const bool allow_pen = weapon_config().m_penetration;
 	const bool prefer_body = weapon_config().m_prefer_body_aim;
-	const int health = record->m_pawn->m_health();
+	const int health = (std::max)(record->m_pawn->m_health(), 1);
+	const float need = static_cast<float>(minimum);
 	vec3_t eye = local->m_eye_pos;
 
+	rage_capsule_t caps[HITBOX_MAX]{};
+	build_capsules(record, caps, HITBOX_MAX);
+
+	const float optimistic = (std::max)(1.f, eye.dist(record->m_origin) - 48.f);
+	int scan[HITBOX_MAX]{};
+	int scan_count = 0;
+	for (int hitbox : m_hitboxes) {
+		if (hitbox < 0 || hitbox >= HITBOX_MAX || !caps[hitbox].m_valid)
+			continue;
+		if (!hitbox_can_meet(weapon_data, record->m_pawn, hitbox, optimistic, need, taser))
+			continue;
+		scan[scan_count++] = hitbox;
+	}
+	for (int i = 1; i < scan_count; ++i) {
+		const int key = scan[i];
+		int j = i;
+		while (j > 0 && scan_rank(scan[j - 1]) > scan_rank(key)) {
+			scan[j] = scan[j - 1];
+			--j;
+		}
+		scan[j] = key;
+	}
+
 	float best_damage = 0.f;
-	float best_body = 0.f;
-	bool lethal = false;
+	bool lethal_body = false;
 
 	record->apply(record->m_pawn);
-	for (int hitbox : m_hitboxes) {
-		if (prefer_body && hitbox == HITBOX_HEAD && best_body >= static_cast<float>(health))
+	for (int i = 0; i < scan_count; ++i) {
+		const int hitbox = scan[i];
+		// A lethal stomach/chest already beats the head. Don't spend traces on it.
+		if (lethal_body && hitbox == HITBOX_HEAD)
+			continue;
+		if (lethal_body && best.m_center && scan_rank(hitbox) > scan_rank(best.m_hitbox))
 			continue;
 
 		std::vector<aim_point_t> points;
@@ -590,31 +924,38 @@ aim_point_t c_rage_bot::select_points(lag_record_t* record, float& damage, float
 			continue;
 
 		for (auto& point : points) {
+			float entry = 0.f;
+			const int struck = capsule_hit(caps, HITBOX_MAX, eye, point.m_point, entry, hitbox);
+			// The bullet hits whatever capsule it enters first. Aiming at stomach
+			// while an arm is in front is a 72 shot, not a 100 stomach shot.
+			if (struck != hitbox)
+				continue;
+
 			penetration_data_t pen{};
 			if (!g_auto_wall->fire_bullet(eye, point.m_point, record->m_pawn, weapon_data, pen, taser))
 				continue;
 			if (!allow_pen && pen.m_penetrated)
 				continue;
 
-			point.m_damage = pen.m_damage;
-			point.m_penetrated = pen.m_penetrated;
-			const bool head = point.m_hitbox == HITBOX_HEAD;
-			if (!head && point.m_damage > best_body)
-				best_body = point.m_damage;
-
-			if (prefer_body && head && point.m_damage < best_body * 1.2f)
+			float ratio = 1.f;
+			const float expected = unscaled_damage(weapon_data, entry);
+			if (expected > 1.f && pen.m_damage > 0.f && pen.m_damage <= expected * 1.15f)
+				ratio = clampf(pen.m_damage / expected, 0.05f, 1.f);
+			else if (pen.m_penetrated && expected > 1.f && pen.m_damage > expected * 1.15f)
+				ratio = clampf(expected / pen.m_damage, 0.05f, 1.f);
+			const float dealt = scaled_damage(weapon_data, record->m_pawn, caps[hitbox].m_hitgroup, entry, ratio);
+			if (dealt + 0.05f < need)
 				continue;
-			if (point.m_damage > best_damage) {
-				best = point;
-				best_damage = point.m_damage;
-			}
-			if (best_damage >= static_cast<float>(health)) {
-				lethal = true;
-				break;
-			}
+
+			point.m_damage = dealt;
+			point.m_penetrated = pen.m_penetrated;
+			if (!better_shot(hitbox, dealt, point.m_center, best.m_hitbox, best_damage, best.m_center, health, prefer_body))
+				continue;
+			best = point;
+			best_damage = dealt;
+			if (hitbox != HITBOX_HEAD && dealt >= static_cast<float>(health))
+				lethal_body = true;
 		}
-		if (lethal)
-			break;
 	}
 	record->reset(record->m_pawn);
 
@@ -864,21 +1205,8 @@ lag_record_t* c_rage_bot::select_record(int handle) {
 			break;
 
 		record.apply(record.m_pawn);
-		float damage = 0.f;
-		for (int hitbox : { HITBOX_HEAD, HITBOX_CHEST, HITBOX_STOMACH }) {
-			hitbox_data_t box = get_hitbox_data(record.m_pawn, hitbox, &record);
-			if (box.m_invalid_data)
-				continue;
-			vec3_t center = (box.m_mins + box.m_maxs) * 0.5f;
-			vec3_t world{};
-			g_math->vector_transform(center, box.m_matrix, world);
-			penetration_data_t pen{};
-			if (!g_auto_wall->fire_bullet(local->m_eye_pos, world, record.m_pawn, data, pen, taser))
-				continue;
-			if (!allow_pen && pen.m_penetrated)
-				continue;
-			damage = (std::max)(damage, pen.m_damage);
-		}
+		const int minimum = minimum_for(record.m_pawn, data);
+		const float damage = score_centers(&record, local->m_eye_pos, data, allow_pen, taser, minimum);
 		record.reset(record.m_pawn);
 
 		if (damage > best_damage) {
@@ -933,21 +1261,8 @@ bool c_rage_bot::build_prediction(int handle, lag_record_t& out) const {
 		if (!record.m_pawn)
 			return -1.f;
 		record.apply(record.m_pawn);
-		float best = -1.f;
-		for (int hitbox : { HITBOX_HEAD, HITBOX_CHEST, HITBOX_STOMACH }) {
-			hitbox_data_t box = get_hitbox_data(record.m_pawn, hitbox, &record);
-			if (box.m_invalid_data)
-				continue;
-			vec3_t center = (box.m_mins + box.m_maxs) * 0.5f;
-			vec3_t world{};
-			g_math->vector_transform(center, box.m_matrix, world);
-			penetration_data_t pen{};
-			if (!g_auto_wall->fire_bullet(local->m_eye_pos, world, record.m_pawn, data, pen, taser))
-				continue;
-			if (!allow_pen && pen.m_penetrated)
-				continue;
-			best = (std::max)(best, pen.m_damage);
-		}
+		const int minimum = minimum_for(record.m_pawn, data);
+		const float best = score_centers(&record, local->m_eye_pos, data, allow_pen, taser, minimum);
 		record.reset(record.m_pawn);
 		return best;
 	};
@@ -1013,11 +1328,6 @@ void c_rage_bot::select_target(float inaccuracy, float spread) {
 	if (!weapon_data || !local)
 		return;
 
-	auto& cfg = weapon_config();
-	const bool taser = weapon_data->m_weapon_type() == WEAPONTYPE_TASER;
-	const bool override_damage = g_key_handler->is_pressed(
-		g_cfg->rage_bot.m_override_damage_key_bind, g_cfg->rage_bot.m_override_damage_key_bind_style);
-
 	float cos_fov = -2.f;
 	vec3_t view_dir{};
 	if (g_cfg->rage_bot.m_fov > 0 && g_cfg->rage_bot.m_fov < 180 && g_ctx->m_user_cmd) {
@@ -1030,18 +1340,13 @@ void c_rage_bot::select_target(float inaccuracy, float spread) {
 
 	float best_damage = -1.f;
 	float best_distance = FLT_MAX;
+	bool best_lethal = false;
 
 	for (auto& [handle, target] : m_aim_targets) {
 		if (!target.m_lag_record || !target.m_pawn || !target.m_pawn->is_alive())
 			continue;
 
-		const int health = target.m_pawn->m_health();
-		int minimum = cfg.m_minimum_damage < 0 ? health : cfg.m_minimum_damage;
-		if (override_damage)
-			minimum = 1;
-		minimum = (std::min)(minimum, health);
-		if (taser)
-			minimum = health;
+		const int minimum = minimum_for(target.m_pawn, weapon_data);
 
 		lag_record_t predicted{};
 		const bool have_prediction = build_prediction(handle, predicted);
@@ -1049,7 +1354,7 @@ void c_rage_bot::select_target(float inaccuracy, float spread) {
 
 		const int side = resolver_side(handle, target.m_pawn, &candidate);
 		float damage = 0.f;
-		aim_point_t point = select_points(&candidate, damage, inaccuracy, spread, side);
+		aim_point_t point = select_points(&candidate, damage, inaccuracy, spread, side, minimum);
 		if (point.m_hitbox < 0 || damage < static_cast<float>(minimum))
 			continue;
 
@@ -1061,9 +1366,13 @@ void c_rage_bot::select_target(float inaccuracy, float spread) {
 		}
 
 		const float distance = point.m_point.dist(local->m_eye_pos);
-		if (damage > best_damage || (damage == best_damage && distance < best_distance)) {
+		const bool kills = damage >= static_cast<float>(target.m_pawn->m_health());
+		const bool better = kills != best_lethal ? kills
+			: (damage > best_damage || (damage == best_damage && distance < best_distance));
+		if (better) {
 			best_damage = damage;
 			best_distance = distance;
+			best_lethal = kills;
 			m_active_record = candidate;
 			m_active_handle = handle;
 			m_active_side = side;
@@ -1448,9 +1757,50 @@ void c_rage_bot::on_create_move() {
 		m_dt_fired = false;
 	const bool ready = can_shoot(weapon);
 
-	if (cfg.m_auto_scope && weapon_type == WEAPONTYPE_SNIPER_RIFLE && !local->m_scoped()
-		&& on_ground && !no_spread && have_target)
-		cmd->m_button_state.m_button_state |= IN_ATTACK2;
+	const bool sniper = weapon_type == WEAPONTYPE_SNIPER_RIFLE;
+	const int scope_tick = g_ctx->m_local_controller ? g_ctx->m_local_controller->m_tick_base() : 0;
+	const bool unscoped = !local->m_scoped() && weapon->m_zoom_level() <= 0;
+	bool enemy_for_scope = have_target;
+	if (!enemy_for_scope && !m_aim_targets.empty() && g_ctx->m_user_cmd) {
+		const int fov = g_cfg->rage_bot.m_fov;
+		if (fov <= 0 || fov >= 180)
+			enemy_for_scope = true;
+		else {
+			auto view = g_ctx->m_user_cmd->pb.base().viewangles();
+			vec3_t view_angles{ view.x(), view.y(), view.z() };
+			vec3_t forward{};
+			g_math->angle_vectors(view_angles, forward);
+			forward = forward.normalize();
+			const float cos_fov = std::cos(deg2rad(static_cast<float>(fov)));
+			const auto* local_data = g_prediction->get_local_data();
+			vec3_t eye = local_data ? local_data->m_eye_pos : local->get_eye_pos();
+			for (const auto& [handle, target] : m_aim_targets) {
+				(void)handle;
+				if (!target.m_lag_record)
+					continue;
+				vec3_t to{
+					target.m_lag_record->m_origin.x - eye.x,
+					target.m_lag_record->m_origin.y - eye.y,
+					target.m_lag_record->m_origin.z + 48.f - eye.z
+				};
+				const float len = std::sqrt(to.x * to.x + to.y * to.y + to.z * to.z);
+				if (len > 1.f && (to.x * forward.x + to.y * forward.y + to.z * forward.z) / len >= cos_fov) {
+					enemy_for_scope = true;
+					break;
+				}
+			}
+		}
+	}
+	if (cfg.m_auto_scope && sniper && unscoped && enemy_for_scope) {
+		const bool secondary_ready = weapon->m_next_secondary_attack() <= scope_tick;
+		const bool cooled = m_last_scope_tick < 0 || scope_tick - m_last_scope_tick >= 12;
+		if (secondary_ready && cooled) {
+			press_scope(cmd);
+			m_last_scope_tick = scope_tick;
+		}
+	}
+	if (!unscoped)
+		m_last_scope_tick = -1;
 
 	const int tick = g_ctx->m_local_controller ? g_ctx->m_local_controller->m_tick_base() : 0;
 	const int until_attack = weapon->m_next_primary_attack() - tick;
@@ -1516,7 +1866,7 @@ void c_rage_bot::on_create_move() {
 			|| (cfg.m_auto_stop_early && !cfg.m_auto_stop_full && speed <= max_speed * 0.34f)
 			|| speed <= 8.f;
 		const bool wait_for_accuracy = cfg.m_delay_shot && !accurate_now && !duck_for_shot && !jump_scout;
-		const bool scope_block = cfg.m_auto_scope && weapon_type == WEAPONTYPE_SNIPER_RIFLE && !local->m_scoped() && !no_spread;
+		const bool scope_block = cfg.m_auto_scope && sniper && !local->m_scoped() && weapon->m_zoom_level() <= 0 && !no_spread;
 
 		if (!just_landed && !wait_for_accuracy && !scope_block && static_cast<float>(chance) >= needed) {
 			if (!g_cfg->rage_bot.m_silent)

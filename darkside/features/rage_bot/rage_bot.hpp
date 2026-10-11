@@ -59,6 +59,15 @@ struct aim_point_t {
 	bool m_penetrated{};
 };
 
+struct rage_capsule_t {
+	int m_hitbox{ -1 };
+	int m_hitgroup{};
+	vec3_t m_a{};
+	vec3_t m_b{};
+	float m_radius{};
+	bool m_valid{};
+};
+
 struct aim_target_t {
 	lag_record_t* m_lag_record{};
 	std::unique_ptr<aim_point_t> m_best_point{};
@@ -123,6 +132,7 @@ class c_rage_bot {
 	peek_draw_t m_peek_draw{};
 	std::mutex m_peek_mutex;
 	int m_last_fire_tick{ -1 };
+	int m_last_scope_tick{ -1 };
 	bool m_dt_fired{};
 	float m_move_yaw{};
 
@@ -137,8 +147,17 @@ class c_rage_bot {
 	bool build_prediction(int handle, lag_record_t& out) const;
 	float point_scale(const vec3_t& point, float radius, float inaccuracy, float spread) const;
 	bool multi_points(lag_record_t* record, int hitbox, std::vector<aim_point_t>& points, float inaccuracy, float spread, int resolver_side);
-	aim_point_t select_points(lag_record_t* record, float& damage, float inaccuracy, float spread, int resolver_side);
+	int minimum_for(c_cs_player_pawn* target, c_cs_weapon_base_v_data* data) const;
+	int hitgroup_of(const hitbox_data_t& data, int hitbox) const;
+	float unscaled_damage(c_cs_weapon_base_v_data* data, float distance) const;
+	float scaled_damage(c_cs_weapon_base_v_data* data, c_cs_player_pawn* pawn, int hitgroup, float distance, float pen_ratio) const;
+	bool hitbox_can_meet(c_cs_weapon_base_v_data* data, c_cs_player_pawn* pawn, int hitbox, float distance, float minimum, bool taser) const;
+	void build_capsules(lag_record_t* record, rage_capsule_t* caps, int count) const;
+	int capsule_hit(const rage_capsule_t* caps, int count, const vec3_t& eye, const vec3_t& point, float& entry, int prefer = -1) const;
+	float score_centers(lag_record_t* record, const vec3_t& eye, c_cs_weapon_base_v_data* data, bool allow_pen, bool taser, int minimum) const;
+	aim_point_t select_points(lag_record_t* record, float& damage, float inaccuracy, float spread, int resolver_side, int minimum);
 	void select_target(float inaccuracy, float spread);
+	void press_scope(c_user_cmd* cmd);
 
 	bool ray_capsule(const vec3_t& start, const vec3_t& dir, const vec3_t& a, const vec3_t& b, float radius, float max_dist) const;
 	bool game_spread(c_base_player_weapon* weapon, int seed, float inaccuracy, float spread, float& out_x, float& out_y) const;

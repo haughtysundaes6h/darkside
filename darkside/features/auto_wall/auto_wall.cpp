@@ -6,13 +6,12 @@ void c_auto_wall::scale_damage(int hitgroup, c_cs_player_pawn* entity, c_cs_weap
 	static convar_t* mp_damage_scale_t_head = g_interfaces->m_var->get_by_name("mp_damage_scale_t_head");
 	static convar_t* mp_damage_scale_ct_body = g_interfaces->m_var->get_by_name("mp_damage_scale_ct_body");
 	static convar_t* mp_damage_scale_t_body = g_interfaces->m_var->get_by_name("mp_damage_scale_t_body");
-	if ( !mp_damage_scale_ct_head || !mp_damage_scale_t_head || !mp_damage_scale_ct_body || !mp_damage_scale_t_body )
-		return;
-
-	float damage_scale_ct_head = mp_damage_scale_ct_head->get_float();
-	float damage_scale_t_head = mp_damage_scale_t_head->get_float();
-	float damage_scale_ct_body = mp_damage_scale_ct_body->get_float();
-	float damage_scale_t_body = mp_damage_scale_t_body->get_float();
+	// Missing convars must not skip hitgroup scaling. Otherwise every body part
+	// is scored as raw weapon damage and a 72 leg/chest shot looks like 100.
+	const float damage_scale_ct_head = mp_damage_scale_ct_head ? mp_damage_scale_ct_head->get_float() : 1.f;
+	const float damage_scale_t_head = mp_damage_scale_t_head ? mp_damage_scale_t_head->get_float() : 1.f;
+	const float damage_scale_ct_body = mp_damage_scale_ct_body ? mp_damage_scale_ct_body->get_float() : 1.f;
+	const float damage_scale_t_body = mp_damage_scale_t_body ? mp_damage_scale_t_body->get_float() : 1.f;
 
 	const bool is_ct = entity->m_team_num() == 3, is_t = entity->m_team_num() == 2;
 
@@ -122,10 +121,11 @@ bool c_auto_wall::fire_bullet(vec3_t start, vec3_t end, c_cs_player_pawn* target
 		if (game_trace.m_hit_entity != target)
 			continue;
 
+		// Simulator damage is pre-hitgroup. Caller scales from the capsule that was entered.
 		pen_data.m_damage = hit.damage;
+		pen_data.m_hitgroup = static_cast<uint8_t>(game_trace.get_hit_group());
 		pen_data.m_hitbox = game_trace.get_hitbox_id();
 		pen_data.m_penetrated = penetrated;
-		scale_damage(game_trace.get_hit_group(), target, weapon_data, pen_data.m_damage);
 		return !is_taser || !penetrated;
 	}
 
