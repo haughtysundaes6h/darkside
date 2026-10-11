@@ -414,6 +414,7 @@ private:
     struct popup_scope {
         ImGuiID id;
         bool open;
+        bool saved_row_started = false; // row-separator run of the window the popup opened over
     };
     ImGuiContext* m_popup_context = nullptr;
     int m_popup_context_frame = -1;
