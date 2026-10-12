@@ -74,25 +74,50 @@ void c_movement::on_create_move(c_user_cmd* user_cmd) {
 bool c_movement::bunnyhop(c_user_cmd* user_cmd, bool jump_held) {
     if (!g_cfg->misc.m_bunny_hop || !user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
         return false;
-
-    const bool requested = (user_cmd->m_button_state.m_button_state & IN_JUMP) != 0 || jump_held;
+    constexpr std::uint64_t jump = static_cast<std::uint64_t>(IN_JUMP);
+    const bool pb_jump = user_cmd->pb.base().has_buttons_pb() &&
+        (user_cmd->pb.base().buttons_pb().buttonstate1() & jump) != 0;
+    const bool requested = (user_cmd->m_button_state.m_button_state & jump) != 0 || pb_jump || jump_held;
     if (!requested)
         return false;
-
     auto* pawn = g_ctx->m_local_pawn;
     if (!pawn->is_alive() || pawn->m_actual_move_type() != movetype_walk ||
         (pawn->m_flags() & (FL_INWATER | FL_WATERJUMP)))
         return false;
 
-    const auto landing = g_prediction->landing(pawn, user_cmd);
-    const bool grounded = landing.valid ? landing.grounded : (pawn->m_flags() & FL_ONGROUND) != 0;
-    auto allocate = [&] { return g_protobuf->add_subtick_move_step(user_cmd); };
+    // On the ground the held jump must stay, so the landing tick is a fresh press.
+    if (pawn->m_flags() & FL_ONGROUND)
+        return false;
 
-    // Airborne landing this tick: press and release on the landing fraction.
-    // Otherwise one transition — press on the ground, release in the air.
-    if (!grounded && landing.will_land && landing.fraction > 0.f && landing.fraction < 1.f)
-        return command_movement::landing_jump(*user_cmd, landing.fraction, allocate);
-    return command_movement::set_jump(*user_cmd, grounded, 0.f, allocate);
+    bool changed = false;
+    const auto clear_jump = [&changed, jump](std::uint64_t& state) {
+        const auto filtered = state & ~jump;
+        changed |= filtered != state;
+        state = filtered;
+    };
+    clear_jump(user_cmd->m_button_state.m_button_state);
+    clear_jump(user_cmd->m_button_state.m_button_state2);
+    clear_jump(user_cmd->m_button_state.m_button_state3);
+
+    auto* base = user_cmd->pb.mutable_base();
+    if (base->has_buttons_pb()) {
+        auto* buttons = base->mutable_buttons_pb();
+        auto value = buttons->buttonstate1(); clear_jump(value); buttons->set_buttonstate1(value);
+        value = buttons->buttonstate2(); clear_jump(value); buttons->set_buttonstate2(value);
+        value = buttons->buttonstate3(); clear_jump(value); buttons->set_buttonstate3(value);
+    }
+
+    const int count = std::clamp(base->subtick_moves_size(), 0, 64);
+    for (int i = 0; i < count; ++i) {
+        auto* step = base->mutable_subtick_moves(i);
+        if (!step || !(step->button() & jump))
+            continue;
+        step->set_button(step->button() & ~jump);
+        if (!step->button())
+            step->set_pressed(false);
+        changed = true;
+    }
+    return changed;
 }
 
 // ============================================================================
@@ -137,24 +162,96 @@ static float best_side_gain(vec3_t velocity, float yaw, float side,
 }
 
 void c_movement::auto_strafe(c_user_cmd* user_cmd, float previous_yaw) {
+    (void)previous_yaw;
     if (!g_cfg->misc.m_auto_strafe || !user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn ||
         !g_ctx->m_local_pawn->is_alive() ||
+        g_ctx->m_local_pawn->m_actual_move_type() != movetype_walk ||
         (g_ctx->m_local_pawn->m_flags() & (FL_ONGROUND | FL_INWATER | FL_WATERJUMP)))
         return;
-
     auto* base = user_cmd->pb.mutable_base();
-    const auto buttons = user_cmd->m_button_state.m_button_state;
-    const movement_math::input keys{
-        float(bool(buttons & IN_FORWARD)) - float(bool(buttons & IN_BACK)),
-        float(bool(buttons & IN_MOVELEFT)) - float(bool(buttons & IN_MOVERIGHT))
-    };
+    const float yaw = base->viewangles().y();
+    if (!std::isfinite(yaw))
+        return;
     const auto velocity = g_ctx->m_local_pawn->m_vec_abs_velocity();
-    const auto move = movement_math::strafe(
-        base->viewangles().y(), previous_yaw, keys,
-        velocity.x, velocity.y, user_cmd->m_command_number,
-        g_cfg->misc.m_strafe_smooth / 100.f);
-    base->set_forwardmove(move.forward);
-    base->set_leftmove(move.left);
+    const float speed_2d = std::hypot(velocity.x, velocity.y);
+    if (!std::isfinite(speed_2d) || speed_2d < 5.f)
+        return;
+    static std::uint64_t last_buttons = 0;
+    static std::uint64_t last_pressed = 0;
+    static int substep = 0;
+    const std::uint64_t buttons = user_cmd->m_button_state.m_button_state;
+    const auto check = [&](std::uint64_t button) {
+        constexpr std::uint64_t l = std::uint64_t(IN_MOVELEFT);
+        constexpr std::uint64_t r = std::uint64_t(IN_MOVERIGHT);
+        constexpr std::uint64_t f = std::uint64_t(IN_FORWARD);
+        constexpr std::uint64_t b = std::uint64_t(IN_BACK);
+        if (!(buttons & button)) { last_pressed &= ~button; return; }
+        const bool fresh = !(last_buttons & button);
+        const bool free = ((button & l) && !(last_pressed & r)) ||
+                          ((button & r) && !(last_pressed & l)) ||
+                          ((button & f) && !(last_pressed & b)) ||
+                          ((button & b) && !(last_pressed & f));
+        if (!fresh && !free)
+            return;
+        if (button & l) last_pressed &= ~r;
+        else if (button & r) last_pressed &= ~l;
+        else if (button & f) last_pressed &= ~b;
+        else if (button & b) last_pressed &= ~f;
+        last_pressed |= button;
+    };
+    check(std::uint64_t(IN_MOVELEFT));
+    check(std::uint64_t(IN_MOVERIGHT));
+    check(std::uint64_t(IN_FORWARD));
+    check(std::uint64_t(IN_BACK));
+    last_buttons = buttons;
+    float fwd = 0.f, left = 0.f;
+    if (last_pressed & std::uint64_t(IN_FORWARD)) fwd = 1.f;
+    else if (last_pressed & std::uint64_t(IN_BACK)) fwd = -1.f;
+    if (last_pressed & std::uint64_t(IN_MOVELEFT)) left = -1.f;
+    else if (last_pressed & std::uint64_t(IN_MOVERIGHT)) left = 1.f;
+    if (fwd == 0.f && left == 0.f)
+        return;
+    const float base_offset = std::atan2(-left, fwd) * 180.f / std::numbers::pi_v<float>;
+    const float target = movement_math::norm(yaw + base_offset);
+    float start = 0.f;
+    const int count = base->subtick_moves_size();
+    for (int i = 0; i < count && i < 64; ++i) {
+        const auto& s = base->subtick_moves(i);
+        if (std::isfinite(s.when()) && s.when() > start)
+            start = s.when();
+    }
+    if (start >= 0.99f)
+        return;
+    constexpr int n = 16;
+    constexpr float tick = 1.f / 64.f;
+    const float frame = tick / float(n);
+    const float step_when = (1.f - start) / float(n + 1);
+    float acc = yaw;
+    float vx = velocity.x, vy = velocity.y;
+    bool added = false;
+    for (int i = 1; i <= n; ++i) {
+        const bool side = ((substep + i) % 2) == 0;
+        const float wish = movement_math::air_strafer(vx, vy, target, frame, side, 260.f);
+        const float view = movement_math::norm(wish - base_offset);
+        const float delta = movement_math::norm(view - acc);
+        if (std::fabs(delta) <= 0.01f)
+            break;
+        auto* s = g_protobuf->add_subtick_move_step(user_cmd);
+        if (!s)
+            break;
+        s->set_when(std::clamp(start + float(i) * step_when, 0.f, 1.f));
+        s->set_yaw_delta(delta);
+        acc = view;
+        movement_math::air_accel(vx, vy, wish, frame, 260.f);
+        added = true;
+    }
+    ++substep;
+    // This command pipeline only resigns the CRC when buttons, angles, or
+    // analog moves change. Yaw-only subticks still have to be signed.
+    if (added) {
+        g_protobuf->sort_subtick_move_steps(user_cmd);
+        g_protobuf->update_move_crc(user_cmd);
+    }
 }
 
 // ============================================================================

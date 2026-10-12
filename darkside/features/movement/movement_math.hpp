@@ -18,6 +18,38 @@ inline input bounded(input move) {
     const float scale = (std::max)({1.f, std::abs(move.forward), std::abs(move.left)});
     return {move.forward / scale, move.left / scale};
 }
+inline float norm(float a) {
+    if (!std::isfinite(a)) return 0.f;
+    while (a > 180.f) a -= 360.f;
+    while (a < -180.f) a += 360.f;
+    return a;
+}
+inline float ideal_angle(float speed, float dt, float wishspeed) {
+    if (speed < 1.f) return 15.f;
+    const float accel = wishspeed * 12.f * dt;
+    float c = (accel >= 30.f) ? 30.f / (2.f * speed) : (30.f - accel) / speed;
+    c = std::clamp(c, -1.f, 1.f);
+    return (std::max)(std::acos(c) * 180.f / std::numbers::pi_v<float>, 1.f);
+}
+inline float air_strafer(float vx, float vy, float target, float dt, bool side, float wishspeed) {
+    const float speed = std::hypot(vx, vy);
+    if (speed < 15.f) return target;
+    const float theta = ideal_angle(speed, dt, wishspeed);
+    const float vel = std::atan2(vy, vx) * 180.f / std::numbers::pi_v<float>;
+    const float d = norm(target - vel);
+    if (std::fabs(d) > 2.f) return norm(d > 0.f ? vel + theta : vel - theta);
+    return norm(side ? vel + theta : vel - theta);
+}
+inline void air_accel(float& vx, float& vy, float wish_yaw, float dt, float wishspeed) {
+    const float r = wish_yaw * std::numbers::pi_v<float> / 180.f;
+    const float wx = std::cos(r), wy = std::sin(r);
+    const float capped = (std::min)(wishspeed, 30.f);
+    const float add = capped - (vx * wx + vy * wy);
+    if (add <= 0.f) return;
+    const float step = (std::min)(wishspeed * 12.f * dt, add);
+    vx += wx * step;
+    vy += wy * step;
+}
 inline input strafe(float yaw, float previous_yaw, input keys, float vx, float vy,
                     int command, float smoothing) {
     if (!std::isfinite(yaw) || !std::isfinite(previous_yaw) || !std::isfinite(vx) || !std::isfinite(vy))
