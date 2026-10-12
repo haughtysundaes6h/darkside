@@ -99,8 +99,6 @@ void register_bind_targets() {
 
     menu_binds::register_bool("misc.bunny_hop", "Bunny Hop", &g_cfg->misc.m_bunny_hop);
     menu_binds::register_bool("misc.auto_strafe", "Automatic Strafe", &g_cfg->misc.m_auto_strafe);
-    menu_binds::register_int("misc.strafe_type", "Strafe Type", &g_cfg->misc.m_strafe_type, 0, 2);
-    menu_binds::register_int("misc.strafe_smooth", "Strafe Smooth", &g_cfg->misc.m_strafe_smooth, 0, 100);
     menu_binds::register_bool("menu.shader", "Menu Shader", &shader_bg::state().enabled);
     menu_binds::register_float("menu.shader_opacity", "Shader Opacity", &shader_bg::state().opacity, 0.f, 1.f);
 
@@ -571,9 +569,6 @@ void c_menu::draw_misc() {
     gui.grid_box("MOVEMENT", k_auto_height);
     gui.row_checkbox("Bunny Hop", &g_cfg->misc.m_bunny_hop);
     gui.row_checkbox("Automatic Strafe", &g_cfg->misc.m_auto_strafe);
-    static const char* strafe_modes[] = { "Legit", "Directional", "Rage" };
-    gui.row_begin(); ImGui::Combo("Strafe Type", &g_cfg->misc.m_strafe_type, strafe_modes, IM_ARRAYSIZE(strafe_modes));
-    gui.row_begin(); ImGui::SliderInt("Smooth", &g_cfg->misc.m_strafe_smooth, 0, 100);
     gui.end_group_box();
 
     gui.grid_col(1);

@@ -211,47 +211,21 @@ void c_movement::auto_strafe(c_user_cmd* user_cmd, float previous_yaw) {
     else if (last_pressed & std::uint64_t(IN_MOVERIGHT)) left = 1.f;
     if (fwd == 0.f && left == 0.f)
         return;
+    // Wish is written as forward/left in the current view. movement_fix rotates
+    // that vector when anti-aim changes yaw, and the quantize fix snaps the
+    // result. Yaw subticks skip both and leave the analog pointing the wrong way.
     const float base_offset = std::atan2(-left, fwd) * 180.f / std::numbers::pi_v<float>;
     const float target = movement_math::norm(yaw + base_offset);
-    float start = 0.f;
-    const int count = base->subtick_moves_size();
-    for (int i = 0; i < count && i < 64; ++i) {
-        const auto& s = base->subtick_moves(i);
-        if (std::isfinite(s.when()) && s.when() > start)
-            start = s.when();
-    }
-    if (start >= 0.99f)
-        return;
-    constexpr int n = 16;
-    constexpr float tick = 1.f / 64.f;
-    const float frame = tick / float(n);
-    const float step_when = (1.f - start) / float(n + 1);
-    float acc = yaw;
-    float vx = velocity.x, vy = velocity.y;
-    bool added = false;
-    for (int i = 1; i <= n; ++i) {
-        const bool side = ((substep + i) % 2) == 0;
-        const float wish = movement_math::air_strafer(vx, vy, target, frame, side, 260.f);
-        const float view = movement_math::norm(wish - base_offset);
-        const float delta = movement_math::norm(view - acc);
-        if (std::fabs(delta) <= 0.01f)
-            break;
-        auto* s = g_protobuf->add_subtick_move_step(user_cmd);
-        if (!s)
-            break;
-        s->set_when(std::clamp(start + float(i) * step_when, 0.f, 1.f));
-        s->set_yaw_delta(delta);
-        acc = view;
-        movement_math::air_accel(vx, vy, wish, frame, 260.f);
-        added = true;
-    }
+    constexpr float frame = 1.f / 64.f;
+    const bool side = (substep & 1) == 0;
+    const float wish = movement_math::air_strafer(velocity.x, velocity.y, target, frame, side, 260.f);
     ++substep;
-    // This command pipeline only resigns the CRC when buttons, angles, or
-    // analog moves change. Yaw-only subticks still have to be signed.
-    if (added) {
-        g_protobuf->sort_subtick_move_steps(user_cmd);
-        g_protobuf->update_move_crc(user_cmd);
-    }
+    if (!std::isfinite(wish))
+        return;
+    const float rel = movement_math::norm(wish - yaw) * std::numbers::pi_v<float> / 180.f;
+    const auto move = movement_math::bounded({std::cos(rel), std::sin(rel)});
+    base->set_forwardmove(move.forward);
+    base->set_leftmove(move.left);
 }
 
 // ============================================================================
@@ -518,21 +492,47 @@ void c_movement::auto_stop(c_user_cmd* user_cmd, c_cs_player_pawn* local_player,
     if (!on_ground && !options.m_air)
         return;
     
+    // Ни один режим не выбран (или Between вне окна кулдауна) — не мешаем движению
+    if (!options.m_full && !options.m_early && !options.m_between)
+        return;
+
     // Убираем shift (влияет на инаккураси в движении)
     auto remove_button = [&](int button) {
         user_cmd->m_button_state.m_button_state &= ~button;
         user_cmd->m_button_state.m_button_state2 &= ~button;
         user_cmd->m_button_state.m_button_state3 &= ~button;
     };
+
+    // В падении скорость не гасим. На подъёме можно стопнуть — шлём полный
+    // контр-вектор, иначе квантайз обнуляет короткий input и стопа нет.
+    if (!on_ground) {
+        const auto velocity = local_player->m_vec_abs_velocity();
+        if (!std::isfinite(velocity.z) || velocity.z <= 0.f)
+            return;
+        const float speed = std::hypot(velocity.x, velocity.y);
+        if (!std::isfinite(speed) || speed <= 1.f)
+            return;
+        auto* base = user_cmd->pb.mutable_base();
+        const float yaw = deg2rad(base->viewangles().y());
+        if (!std::isfinite(yaw))
+            return;
+        const float sine = std::sin(yaw);
+        const float cosine = std::cos(yaw);
+        remove_button(IN_SPEED);
+        base->set_forwardmove(std::clamp(-(velocity.x * cosine + velocity.y * sine) / speed, -1.f, 1.f));
+        base->set_leftmove(std::clamp((velocity.x * sine - velocity.y * cosine) / speed, -1.f, 1.f));
+        if (options.m_duck) {
+            user_cmd->m_button_state.m_button_state |= IN_DUCK;
+            user_cmd->m_button_state.m_button_state2 |= IN_DUCK;
+            user_cmd->m_button_state.m_button_state3 |= IN_DUCK;
+        }
+        return;
+    }
     
     remove_button(IN_SPEED);
     
     const float weapon_speed = weapon->get_max_speed();
     if (!std::isfinite(weapon_speed) || weapon_speed <= 0.f)
-        return;
-    
-    // Ни один режим не выбран (или Between вне окна кулдауна) — не мешаем движению
-    if (!options.m_full && !options.m_early && !options.m_between)
         return;
     
     // Порог торможения:
