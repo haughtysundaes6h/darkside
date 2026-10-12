@@ -72,114 +72,27 @@ void c_movement::on_create_move(c_user_cmd* user_cmd) {
 // ============================================================================
 
 bool c_movement::bunnyhop(c_user_cmd* user_cmd, bool jump_held) {
-    if (!user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
+    if (!g_cfg->misc.m_bunny_hop || !user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
+        return false;
+
+    const bool requested = (user_cmd->m_button_state.m_button_state & IN_JUMP) != 0 || jump_held;
+    if (!requested)
         return false;
 
     auto* pawn = g_ctx->m_local_pawn;
-    if (!pawn->is_alive() || pawn->m_actual_move_type() != movetype_walk)
+    if (!pawn->is_alive() || pawn->m_actual_move_type() != movetype_walk ||
+        (pawn->m_flags() & (FL_INWATER | FL_WATERJUMP)))
         return false;
 
-    // В воде не работает
-    if (pawn->m_flags() & (FL_INWATER | FL_WATERJUMP))
-        return false;
-
-    // Защита от двойного вызова: бхоп дергается и из хука, и из
-    // on_create_move — обрабатываем один номер команды один раз
-    static int last_bhop_command = -1;
-    const bool already_processed = (user_cmd->m_command_number == last_bhop_command);
-    last_bhop_command = user_cmd->m_command_number;
-
-    // Кнопка не зажата — физические прыжки движок обработает сам
-    if (!jump_held) {
-        m_bhop_release_done = false;
-        return false;
-    }
-
-    auto* base = user_cmd->pb.mutable_base();
-    auto allocate = [&]() {
-        return g_protobuf->add_subtick_move_step(user_cmd);
-    };
-
-    auto landing = g_prediction->landing(pawn, user_cmd);
+    const auto landing = g_prediction->landing(pawn, user_cmd);
     const bool grounded = landing.valid ? landing.grounded : (pawn->m_flags() & FL_ONGROUND) != 0;
+    auto allocate = [&] { return g_protobuf->add_subtick_move_step(user_cmd); };
 
-    auto& buttons = user_cmd->m_button_state;
-
-    auto make_step = [&](bool press, float when) -> CSubtickMoveStep* {
-        if (already_processed)
-            return nullptr;
-        auto* step = allocate();
-        if (!step)
-            return nullptr;
-        step->set_button(IN_JUMP);
-        step->set_pressed(press);
-        step->set_when(when);
-        step->clear_analog_forward_delta();
-        step->clear_analog_left_delta();
-        step->clear_pitch_delta();
-        step->clear_yaw_delta();
-        return step;
-    };
-
-    auto find_jump_step = [&](bool press) -> CSubtickMoveStep* {
-        for (int i = 0; i < base->subtick_moves_size(); ++i) {
-            auto* step = base->mutable_subtick_moves(i);
-            if (step && step->button() == IN_JUMP && step->pressed() == press)
-                return step;
-        }
-        return nullptr;
-    };
-
-    if (grounded) {
-        // === ПРЫЖОК ===
-        // В воздухе мы сняли IN_JUMP с кнопок, поэтому у сервера
-        // last_buttons без джампа и наш press — НОВЫЙ переход. Без этого
-        // зажатая со прошлого прыжка кнопка не даёт перехода и прыжок
-        // молчит (именно поэтому старый вариант не работал со второго хопа).
-        if (!find_jump_step(true))
-            make_step(true, 0.0f);
-
-        buttons.m_button_state |= IN_JUMP;      // состояние на конец тика
-        buttons.m_button_state2 |= IN_JUMP;     // был press в этом тике
-        buttons.m_button_state3 &= ~IN_JUMP;
-
-        m_bhop_release_done = false;
-        return true;
-    }
-
-    // === ВОЗДУХ ===
-    // Готовим свежий press к следующему приземлению: сервер НЕ должен
-    // видеть IN_JUMP в last_buttons. Стираем биты; в тике реального
-    // перехода вниз ставим release-степ, чтобы ни один путь сервера не
-    // считал кнопку зажатой.
-    const bool had_jump = (buttons.m_button_state & IN_JUMP) != 0;
-    buttons.m_button_state &= ~IN_JUMP;
-    buttons.m_button_state2 &= ~IN_JUMP;
-    if (had_jump)
-        buttons.m_button_state3 |= IN_JUMP;     // release в этом тике
-    else
-        buttons.m_button_state3 &= ~IN_JUMP;
-
-    if (had_jump || !m_bhop_release_done) {
-        if (!find_jump_step(false))
-            make_step(false, 0.0f);
-        m_bhop_release_done = true;
-    }
-
-    // Landing predict: если коснёмся земли в середине тика — жмём прыжок
-    // прямо на фракции приземления, не теряя тик на границе.
-    if (landing.valid && landing.will_land && landing.fraction > 0.0f && landing.fraction < 1.0f) {
-        if (!find_jump_step(true))
-            make_step(true, landing.fraction);
-
-        // Пресс на фракции остаётся зажатым до конца тика; state3 поднят
-        // только если release случился в этом же тике
-        buttons.m_button_state |= IN_JUMP;
-        buttons.m_button_state2 |= IN_JUMP;
-        return true;
-    }
-
-    return true;
+    // Airborne landing this tick: press and release on the landing fraction.
+    // Otherwise one transition — press on the ground, release in the air.
+    if (!grounded && landing.will_land && landing.fraction > 0.f && landing.fraction < 1.f)
+        return command_movement::landing_jump(*user_cmd, landing.fraction, allocate);
+    return command_movement::set_jump(*user_cmd, grounded, 0.f, allocate);
 }
 
 // ============================================================================
@@ -224,146 +137,24 @@ static float best_side_gain(vec3_t velocity, float yaw, float side,
 }
 
 void c_movement::auto_strafe(c_user_cmd* user_cmd, float previous_yaw) {
-    if (!user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn)
-        return;
-    
-    auto* pawn = g_ctx->m_local_pawn;
-    if (!pawn->is_alive())
+    if (!g_cfg->misc.m_auto_strafe || !user_cmd || !user_cmd->pb.has_base() || !g_ctx->m_local_pawn ||
+        !g_ctx->m_local_pawn->is_alive() ||
+        (g_ctx->m_local_pawn->m_flags() & (FL_ONGROUND | FL_INWATER | FL_WATERJUMP)))
         return;
 
-    // Subtick-режим обрабатывается отдельным пер-сабтик стрейфером
-    if (g_cfg->misc.m_strafe_type == 3) {
-        subtick_strafe(user_cmd, pawn, previous_yaw);
-        return;
-    }
-    
-    // Только в воздухе
-    if (pawn->m_flags() & FL_ONGROUND)
-        return;
-    
-    // Не в воде
-    if (pawn->m_flags() & (FL_INWATER | FL_WATERJUMP))
-        return;
-    
     auto* base = user_cmd->pb.mutable_base();
-    
-    // Получаем текущую скорость и кнопки
     const auto buttons = user_cmd->m_button_state.m_button_state;
-    const vec3_t velocity = pawn->m_vec_abs_velocity();
-    const float current_yaw = base->viewangles().y();
-    
-    // Определяем направление от нажатых кнопок
-    movement_math::input keys {
+    const movement_math::input keys{
         float(bool(buttons & IN_FORWARD)) - float(bool(buttons & IN_BACK)),
         float(bool(buttons & IN_MOVELEFT)) - float(bool(buttons & IN_MOVERIGHT))
     };
-    
-    // Вычисляем strafe через math
-    float smooth = g_cfg->misc.m_strafe_smooth / 100.0f;
-    
-    // В зависимости от типа стрейфа
-    switch (g_cfg->misc.m_strafe_type) {
-        case 0: // Legit - следуем за мышкой
-        {
-            auto move = movement_math::strafe(
-                current_yaw, 
-                previous_yaw, 
-                keys,
-                velocity.x, 
-                velocity.y, 
-                user_cmd->m_command_number, 
-                smooth
-            );
-            base->set_forwardmove(move.forward);
-            base->set_leftmove(move.left);
-            break;
-        }
-        
-        case 1: // Directional
-        case 2: // Rage
-        {
-            float speed = velocity.length_2d();
-            
-            if (speed < 15.0f) {
-                // Если медленно - просто идём вперёд
-                base->set_forwardmove(1.0f);
-                base->set_leftmove(0.0f);
-                return;
-            }
-            
-            // Вычисляем идеальный угол
-            float ideal_angle = get_ideal_strafe_angle(speed);
-            
-            // Угол скорости
-            float vel_angle = rad2deg(std::atan2(velocity.y, velocity.x));
-            
-            // Дельта с целевым направлением
-            float target_yaw = current_yaw;
-            if (std::hypot(keys.forward, keys.left) > 0.01f) {
-                target_yaw += rad2deg(std::atan2(keys.left, keys.forward));
-            }
-            
-            float delta = std::remainder(target_yaw - vel_angle, 360.0f);
-            
-            if (g_cfg->misc.m_strafe_type == 2) {
-                // Rage: выбираем борт по МАКСИМАЛЬНОМУ ПРИРОСТУ скорости
-                // (предикт airaccelerate), а не вслепую чередуем стороны —
-                // слепое чередование половину тиков стрейфит ПРОТИВ веля
-                // и режет скорость. Поворот мыши имеет приоритет: если
-                // крутим мышью — стрейфим в сторону поворота.
-                static auto airaccel_var = g_interfaces->m_var->get_by_name("sv_airacceleration");
-                static auto wishspeed_var = g_interfaces->m_var->get_by_name("sv_air_max_wishspeed");
-                const float air_accel = airaccel_var ? airaccel_var->get_float() : 12.f;
-                const float wish_cap = wishspeed_var ? wishspeed_var->get_float() : 30.f;
-
-                float friction = 1.f;
-                if (auto* ms = pawn->m_movement_services()) {
-                    const float f = ms->m_surface_friction();
-                    friction = (std::isfinite(f) && f > 0.f) ? (std::clamp)(f, 0.25f, 1.f) : 1.f;
-                }
-
-                const float turn = std::remainder(current_yaw - previous_yaw, 360.f);
-                const int turn_side = turn > 0.05f ? 1 : (turn < -0.05f ? -1 : 0);
-
-                int side = 0;
-                if (turn_side != 0 && best_side_gain(velocity, current_yaw, float(turn_side),
-                        wish_cap, air_accel, INTERVAL_PER_TICK, friction) > 0.f)
-                    side = turn_side;
-                else {
-                    const float gain_left = best_side_gain(velocity, current_yaw, 1.f, wish_cap, air_accel, INTERVAL_PER_TICK, friction);
-                    const float gain_right = best_side_gain(velocity, current_yaw, -1.f, wish_cap, air_accel, INTERVAL_PER_TICK, friction);
-                    side = gain_left >= gain_right ? 1 : -1;
-                    if ((std::max)(gain_left, gain_right) <= 0.f)
-                        side = delta > 0.f ? 1 : -1; // тупик — хотя бы к велю
-                }
-
-                base->set_forwardmove(0.0f);
-                base->set_leftmove(float(side));
-                return;
-            }
-
-            // Directional - корректируем к цели
-            if (delta > ideal_angle * smooth) {
-                base->set_forwardmove(0.0f);
-                base->set_leftmove(1.0f);
-            } else if (delta < -ideal_angle * smooth) {
-                base->set_forwardmove(0.0f);
-                base->set_leftmove(-1.0f);
-            } else {
-                // У цели - WASD-комбо по зажатым кнопкам (W+A/D и т.д.),
-                // без чередования вслепую
-                if (std::hypot(keys.forward, keys.left) > 0.01f) {
-                    auto move = movement_math::bounded(keys);
-                    base->set_forwardmove(move.forward);
-                    base->set_leftmove(move.left);
-                } else {
-                    base->set_forwardmove(1.0f);
-                    base->set_leftmove(0.0f);
-                }
-            }
-            break;
-        }
-    }
+    const auto velocity = g_ctx->m_local_pawn->m_vec_abs_velocity();
+    const auto move = movement_math::strafe(
+        base->viewangles().y(), previous_yaw, keys,
+        velocity.x, velocity.y, user_cmd->m_command_number,
+        g_cfg->misc.m_strafe_smooth / 100.f);
+    base->set_forwardmove(move.forward);
+    base->set_leftmove(move.left);
 }
 
 // ============================================================================
